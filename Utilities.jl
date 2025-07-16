@@ -5,6 +5,7 @@ using Combinatorics
 using FFTW
 using PyPlot
 using ProgressMeter
+using Hungarian
 
 function safe_div(num::Real, den::Real; ϵ::Real=1e-12)
     abs(den) < ϵ ? num/ϵ : num/den
@@ -216,15 +217,21 @@ end
 
 
     function fix_phase!(v::AbstractVector)
-        # Find index of element with largest magnitude
         idx = argmax(abs.(v))
         c = v[idx]
         if abs(c) < 1e-12
-            return v  # Avoid division by zero
+            return v
         end
         phase_factor = conj(c) / abs(c)
         v .= v .* phase_factor
         return v
+    end
+
+    function fix_phase!(M::AbstractMatrix)
+        for j in 1:size(M, 2)
+            fix_phase!(view(M, :, j))
+        end
+        return M
     end
 
     function decompose_index_valleyful(i::Int, p::Int, levels::Int)
@@ -257,10 +264,10 @@ end
             degeneracy_zeroth = 4 * p
             degeneracy_per_level = 4 * p  # For each n>0 (both positive and negative branches)
             elseif spin
-            degeneracy_zeroth = 2 * p
-            degeneracy_per_level = 2 * p
+            degeneracy_zeroth = 4 * p
+            degeneracy_per_level =  2*p
         else
-            degeneracy_zeroth = p
+            degeneracy_zeroth = 2*p
             degeneracy_per_level = p
         end
 
@@ -303,4 +310,44 @@ end
         return groups
     end
 
+    function fix_gauge!(vecs_current::Matrix{ComplexF64}, vecs_previous::Matrix{ComplexF64})
+        n = size(vecs_current, 2)
+
+        # Compute overlap matrix and get absolute values for Hungarian algorithm
+        # M[i, j] = |<previous_i | current_j>|
+        M = abs.(vecs_previous' * vecs_current)
+
+        # Use Hungarian algorithm to find optimal assignment (maximize total overlap)
+        # We negate M to convert to a minimization problem, as hungarian solves minimization
+        assignment, _ = hungarian(-M)
+
+        # Reorder bands according to optimal assignment
+        new_vecs = similar(vecs_current)
+        for (prev_band_idx, current_band_idx) in enumerate(assignment)
+            # The hungarian output 'assignment' maps column indices of the cost matrix
+            # (which correspond to 'current' bands) to row indices (which correspond to 'previous' bands).
+            # So, assignment[current_band_idx] = prev_band_idx means current_band_idx should be
+            # mapped to prev_band_idx.
+            # However, the hungarian package returns `assignment` such that `assignment[i]` is the
+            # column matched with row `i`. If `M` is `U'*V`, row `i` corresponds to `U_i`,
+            # and column `j` to `V_j`. So `assignment[i]` is the index `j` that `U_i` is best matched with.
+            # Therefore, we want `new_vecs[:, i]` to be `vecs_current[:, assignment[i]]`.
+            new_vecs[:, prev_band_idx] = vecs_current[:, assignment[prev_band_idx]]
+        end
+
+        # Fix phases to make overlaps real and positive
+        # We now compute the overlap with the reordered vectors
+        overlap_matrix = vecs_previous' * new_vecs
+        for band in 1:n
+            c = overlap_matrix[band, band] # This is <vecs_previous[:, band] | new_vecs[:, band]>
+            if abs(c) > 1e-12
+                phase_factor = conj(c) / abs(c) # Rotate new_vecs[:, band] by -angle(c)
+                new_vecs[:, band] .*= phase_factor
+            else
+                @warn "Very small overlap for band $band (|overlap| = $(abs(c))) when fixing gauge."
+                end
+            end
+
+            return new_vecs
+        end
 

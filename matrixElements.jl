@@ -9,9 +9,10 @@ function matrixElement( k_x, k_y, S, S_prime,l, l_prime,n, n_prime,  N, B, L,val
     V0 = 1.0
     Cn = 1.0
     Cn_prime = 1.0
+    phi_0 = 1
     ξ = abs(n - n_prime)
-    l_b = 1/(sqrt(B) + ϵ)
-    β = B + ϵ  # Add ϵ to B for all β uses
+    l_b = phi_0/(sqrt(B) + ϵ)
+    β = (B + ϵ)*L^2/phi_0  # beta is p/q
     K1 = 2π /L  # Protect against k_y=0
     d_x = L + ϵ
     d_y = L + ϵ

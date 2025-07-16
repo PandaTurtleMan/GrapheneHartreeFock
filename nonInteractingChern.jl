@@ -5,103 +5,153 @@ include("matrixElements.jl")
 include("LandauLevels.jl")
 include("solveNonInteractingProblem.jl")
 
-function compositeLinkVariable(filledBandsGrid, k1, k2, orbitalsGroup)
-    states_k1 = filledBandsGrid[k1...][:, orbitalsGroup]
-    states_k2 = filledBandsGrid[k2...][:, orbitalsGroup]
-    M = states_k1' * states_k2  # Overlap matrix
-    #matrixSize
-    #if norm(M) < sqrt(50)
-    #    print("uh oh,$k1 and $k2 did a booboo for group $orbitalsGroup[1]")
-    #end
-    return det(M)/abs(det(M))
-end
-
-function nonInteractingCompositeChernNumber(
-    xstart, xend, ystart, yend,
-    grid_size, levels, p, q, harmonics,
-    bohrMagneton, phi, nF, L, orbitalsGroups;
-    spin=false, valley=false, ϵ=1e-12
-    )
-    X = LinRange(xstart, xend, grid_size)
-    Y = LinRange(ystart, yend, grid_size)
-    @info "Computing composite Chern numbers for non-interacting bands..."
-
-        # Precompute eigenvectors for all k-points
-        eigenvecsGrid = Array{Any}(undef, grid_size, grid_size)
-        total_points = grid_size * grid_size
-        progress = Progress(total_points, desc="Diagonalizing at k-points: ",
-                            barglyphs=BarGlyphs('|','█','▁','|',' '), output=stderr)
-
-        for i in 1:grid_size
-            for j in 1:grid_size
-                kx = X[i]
-                ky = Y[j]
-                B = p/(q*L^2)
-                l_B = 1/(sqrt(B) + ϵ)
-
-                # Build Hamiltonian
-                if valley
-                    H = spinfulValleyfulHamiltonian(kx, ky, levels, harmonics, phi, p, q, L, bohrMagneton)
-                elseif spin
-                    H = spinfulHamiltonian(kx, ky, levels, harmonics, phi, p, q, L, bohrMagneton)
-                else
-                    H = Hamiltonian(kx, ky, levels, harmonics, phi, p, q, L)
-                end
-
-                # Diagonalize and store all eigenvectors
-                F = eigen(Hermitian(H))
-                eigenvecsGrid[i, j] = F.vectors
-                next!(progress)
-
-            end
-            GC.gc()
-        end
-        numberOfGroups = length(orbitalsGroups)
-        chern_numbers = zeros(numberOfGroups)
-        progress_bands = Progress(numberOfGroups, desc="Computing Chern numbers: ", barglyphs=BarGlyphs('|','█','▁','|',' '), output=stderr)
-
-        for group_idx in 1:numberOfGroups
-            chern = 0.0
-            group = orbitalsGroups[group_idx]
-
-            for i in 1:(grid_size-1)
-                for j in 1:(grid_size -1)
-                    # Define plaquette corners (CCW order)
-                    k1 = (i, j)
-                    k2 = (i+1, j)
-                    k3 = (i+1, j+1)
-                    k4 = (i, j+1)
-
-                    # Compute link products
-                    U12 = compositeLinkVariable(eigenvecsGrid, k1, k2, group)
-                    U23 = compositeLinkVariable(eigenvecsGrid, k2, k3, group)
-                    U34 = compositeLinkVariable(eigenvecsGrid, k4, k3, group)^(-1)
-                    U41 = compositeLinkVariable(eigenvecsGrid, k1, k4, group)^(-1)
-
-                    # Calculate Berry phase for plaquette
-                    product = U12 * U23 * U34 * U41
-                    phase = angle(product)  # -π to π
-                    chern += phase
-                end
-            end
-
-            chern_numbers[group_idx] = round(chern / (2π), digits=5)
-            next!(progress_bands)
-        end
-
-        return chern_numbers
+function compositeLinkVariable(i,j,states1, states2, group)
+    M = states1' * states2
+    detM = det(M)
+    if abs(detM) < 1e-8
+        @warn "Small overlap determinant: |det| = $(abs(detM)) for group $group at point k_x = $i, k_y = $j"
     end
 
+    return detM / abs(detM)
+end
+
+    function compute_kx_column(i, X, Y, build_H, prev_col, grid_size; periodic_ref=nothing)
+        col = Vector{Matrix{ComplexF64}}(undef, grid_size)
+        kx = X[i]
+
+        # Compute first point in column
+        ky = Y[1]
+        H = build_H(kx, ky)
+        eig = eigen(Hermitian(H))
+        vecs = eig.vectors
+
+        if !isnothing(periodic_ref)
+            # Force gauge consistency with periodic_ref (left column)
+            vecs = fix_gauge!(vecs, periodic_ref[1])
+            elseif isnothing(prev_col)
+            fix_phase!(vecs)
+        else
+            vecs = fix_gauge!(vecs, prev_col[1])
+        end
+        col[1] = vecs
+
+        # Compute remaining points in column
+        for j in 2:grid_size
+            ky = Y[j]
+            H = build_H(kx, ky)
+            eig = eigen(Hermitian(H))
+            vecs = eig.vectors
+            vecs = fix_gauge!(vecs, col[j-1])  # Fix gauge relative to previous point in same column
+            col[j] = vecs
+        end
+        return col
+    end
+
+    function nonInteractingCompositeChernNumber(
+        build_H::Function,
+        xstart, xend, ystart, yend,
+        grid_size, orbitalsGroups;
+        ϵ=1e-12
+        )
+        @info "Starting column-based Chern number calculation..."
+        X = LinRange(xstart, xend, grid_size)
+        Y = LinRange(ystart, yend, grid_size)
+        chern_phases = zeros(length(orbitalsGroups))
+
+        # Compute and store col0 (first column)
+        @info "Computing first column..."
+        col0 = compute_kx_column(1, X, Y, build_H, nothing, grid_size)
+        col_left = col0
+
+        # Compute next column if needed
+        if grid_size > 1
+            @info "Computing second column..."
+            col_right = compute_kx_column(2, X, Y, build_H, col_left, grid_size)
+        else
+            col_right = col0
+        end
+
+        progress = Progress(grid_size, desc="Processing columns: ",
+                            barglyphs=BarGlyphs('|','█','▁','|',' '),
+                            output=stderr)
+
+        nthreads = Threads.nthreads()
+
+        for i in 1:grid_size
+            i_next = i == grid_size ? 1 : i+1
+
+            # For last column, use col0 as right column
+            if i == grid_size
+                col_right = col0
+            end
+
+            # Allocate thread-local storage
+            thread_phases = [zeros(length(orbitalsGroups)) for _ in 1:nthreads]
+
+                # Process current column pair
+                Threads.@threads for j in 1:grid_size
+                    tid = Threads.threadid()
+                    j_next = j == grid_size ? 1 : j+1
+
+                    for (group_idx, group) in enumerate(orbitalsGroups)
+                        # Get states for the plaquette
+                        statesA = @view col_left[j][:, group]       # (i, j)
+                        statesB = @view col_left[j_next][:, group]   # (i, j_next)
+                        statesC = @view col_right[j_next][:, group]  # (i_next, j_next)
+                        statesD = @view col_right[j][:, group]       # (i_next, j)
+
+                        # Calculate link variables
+                        U12 = compositeLinkVariable(i, j, statesA, statesB, group)
+                        U23 = compositeLinkVariable(i, j, statesB, statesC, group)
+                        U34 = compositeLinkVariable(i, j, statesC, statesD, group)
+                        U41 = compositeLinkVariable(i, j, statesD, statesA, group)
+
+                        # Calculate Berry phase
+                        product = U12 * U23 * U34 * U41
+                        phase = angle(product)
+                        thread_phases[tid][group_idx] += phase
+                    end
+                end
+
+                # Accumulate thread results
+                for phases in thread_phases
+                    chern_phases .+= phases
+                end
+
+                # Prepare for next iteration
+                if i < grid_size
+                    col_left = col_right
+                    if i < grid_size - 1
+                        col_right = compute_kx_column(i + 2, X, Y, build_H, col_left, grid_size)
+                    end
+                end
+
+                next!(progress)
+            end
+
+            chern_numbers = round.(chern_phases / (2π), digits=5)
+            return chern_numbers
+        end
+
+        function build_hamiltonian(kx, ky; levels, harmonics, phi, p, q, L, bohrMagneton, valley)
+            if valley
+                return spinfulValleyfulHamiltonian(kx, ky, levels, harmonics, phi, p, q, L, bohrMagneton)
+            else
+                return Hamiltonian(kx, ky, levels, harmonics, phi, p, q, L)
+            end
+        end
+
     function groupBandsByLandauLevel(; levels, p, nF, spin, valley)
+        @info "Calculating groups"
         # Calculate degeneracies
         if valley
             degeneracy_zeroth = 4 * p
             degeneracy_per_level = 4 * p  # For each n>0 (both branches)
-            elseif spin
-            degeneracy_zeroth = 2 * p
+        elseif spin
+            degeneracy_zeroth = 4 * p
             degeneracy_per_level = 2 * p
         else
-            degeneracy_zeroth = p
+            degeneracy_zeroth = 2* p
             degeneracy_per_level = p
         end
 
@@ -112,6 +162,7 @@ function nonInteractingCompositeChernNumber(
         band_counter = 1
 
         # Negative energy levels (n = levels to 1, descending)
+        levels = valley ? levels : levels -1
         for n in levels:-1:1
             band_counter + degeneracy_per_level > nF && break
             group = band_counter:(band_counter + degeneracy_per_level - 1)
@@ -129,53 +180,72 @@ function nonInteractingCompositeChernNumber(
 
         # Positive energy levels (n = 1 to levels, ascending)
         for n in 1:levels
-            band_counter + degeneracy_per_level > nF && break
+            band_counter + degeneracy_per_level > nF+1 && break
             group = band_counter:(band_counter + degeneracy_per_level - 1)
             push!(groups, collect(group))
             band_counter += degeneracy_per_level
         end
-
+        @info "Grouping complete!"
         return groups
     end
 
     function main()
         # Physical parameters
-        levels= 5
-        p, q = 30, 239
+        levels = 5
+        p, q = 10, 11
         L = 1.0
-        nF = 1420
+        nF = 1500
         phi = 0
-        fourier_coeffs = [1]  # Fourier coefficients
+        fourier_coeffs = [1]
         bohrMagneton = 0.0
+        spin = true
+        valley = true
 
-        # Brillouin zone grid
-        xstart = -π/L
-        xend = π/L
+        # BZ grid
+        xstart = -p*π/(q*L)
+        xend = p*π/(q*L)
         ystart = -p*π/(q*L)
         yend = p*π/(q*L)
-        grid_size = 10
+        grid_size = 100  # Reduced for testing
 
-        #Group bands by Landau level
+        # Group bands
         orbitalsGroups = groupBandsByLandauLevel(
             levels=levels, p=p, nF=nF,
-            spin=true, valley=true
+            spin=spin, valley=valley
             )
-        #orbitalsGroups = [1:271]
 
-        # Compute composite Chern numbers
+        # Build Hamiltonian function with captured parameters
+        build_H(kx, ky) = build_hamiltonian(kx, ky;
+                                            levels=levels,
+                                            harmonics=fourier_coeffs,
+                                            phi=phi,
+                                            p=p,
+                                            q=q,
+                                            L=L,
+                                            bohrMagneton=bohrMagneton,
+                                            valley=valley
+                                            )
+
+        # Compute Chern numbers
         cherns = nonInteractingCompositeChernNumber(
+            build_H,
             xstart, xend, ystart, yend,
-            grid_size, levels, p, q, fourier_coeffs,
-            bohrMagneton, phi, nF, L, orbitalsGroups;
-            spin=true, valley=true
+            grid_size, orbitalsGroups
             )
 
         # Print results
         println("\nComposite Chern Numbers:")
         for (i, chern) in enumerate(cherns)
             bands = orbitalsGroups[i]
-            println("Group $i (bands $(first(bands))-$(last(bands)): $(round(chern, digits=3))")
+            println("Group $i (bands $(first(bands))-$(last(bands))): $(round(chern, digits=3))")
         end
     end
 
-    main()
+    # Add parallel processing setup
+    if Threads.nthreads() == 1
+        @info "Running single-threaded. Start Julia with multiple threads (e.g., julia -t auto) for better performance."
+        else
+            @info "Using $(Threads.nthreads()) threads for parallel computation"
+            end
+
+            main()

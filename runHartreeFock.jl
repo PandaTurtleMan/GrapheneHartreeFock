@@ -70,7 +70,7 @@ function main()
     @info "Computing Chern numbers with Landau level grouping..."
 
     # Group bands by Landau level index
-    groups = groupBandsByLandauLevel(levels=2, p=2, nF=24, spin=true, valley=true)
+    groups = groupBandsByLandauLevel(levels=2, p=5, nF=130, spin=true, valley=true)
 
     # Compute composite Chern numbers
     composite_cherns = hartreeFockCompositeChernNumber(

@@ -8,7 +8,7 @@ function main()
     # Physical parameters
     k_x, k_y = 0.0, 0.0
     mnrange = 2
-    levels = 3
+    levels = 5
     #phi = 0
     #p, q = 15,37
     #L = 1
@@ -27,17 +27,18 @@ function main()
     #plotBandEnergies(k_x, k_y, levels, fourier_coeffs, phi, L, 2)
     # Set parameters
     #levels = 2
-    p, q = 27, 100
+    p, q = 10,11
     L = 1.0
     phi = 0
     length = 100
-    ky_range = LinRange(-pi/(q*L),pi/(q*L),length)
+    ky_range = LinRange(-p*pi/(q*L),p*pi/(q*L),length)
     fourier_coeffs = [1]
-    k_x_fixed = 0
+    k_x_fixed = -p*pi/(q*L)
     #kx_range
-    plot_spectrum_along_kx(k_x_fixed, ky_range, levels, fourier_coeffs, phi, p, q, L)
+    plot_spectrum_along_ky(k_x_fixed, ky_range, levels, fourier_coeffs, phi, p, q, L)
 
     #plotBandEnergies(k_x, k_y, levels, fourier_coeffs, phi, L, mnrange)
 end
 
 main()
+#test_kx_periodicity()
