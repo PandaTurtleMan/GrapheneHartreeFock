@@ -130,6 +130,23 @@ function fourier_dict(mnrange)
 end
 
 
+#this should be changed to be more general, but for now leaving it like this
+function get_c4_harmonic_vectors(index::Int)
+    if index == 1
+        return [(1, 0), (0, 1), (-1, 0), (0, -1)]
+        elseif index == 2
+        return [(1, 1), (-1, 1), (-1, -1), (1, -1)]
+        elseif index == 3
+        return [(2, 0), (0, 2), (-2, 0), (0, -2)]
+        elseif index == 4
+        # Note: (2,1) and (1,2) generate distinct C4 orbits
+        return [(2, 1), (-1, 2), (-2, -1), (1, -2), (1, 2), (-2, 1), (-1, -2), (2, -1)]
+    else
+        return [] # Return empty for unsupported indices
+    end
+end
+
+
 function dotproduct(vec1,vec2)
     result = 0
     len = min(length(vec1),length(vec2))
@@ -350,4 +367,36 @@ end
 
             return new_vecs
         end
+
+        """
+        setup_indices(params)
+
+        Creates all necessary ITensor Index objects for the simulation.
+            """
+            function setup_indices(p, levels, kx_grid, ky_grid)
+                # Quantum number indices with BlockSparse structure (QN conservation)
+                # Each state is labeled by a set of quantum numbers.
+                # We define the space for each quantum number.
+                spin_space = [QN("Sz", sz) => 1 for sz in (1, -1)]
+                    valley_space = [QN("Kz", K) => 1 for K in (1, -1)]
+                        sublattice_space = [QN("Lz", λ) => 1 for λ in (1, -1)]
+                            ll_space = [QN("N", n) => 1 for n in 0:levels-1]
+                                subband_space = [QN("l", l) => 1 for l in 0:p-1]
+
+                                    # Create the ITensor indices
+                                    s = Index(spin_space..., name="spin")
+                                    k = Index(valley_space..., name="valley")
+                                    λ = Index(sublattice_space..., name="sublattice")
+                                    n = Index(ll_space..., name="ll")
+                                    l = Index(subband_space..., name="subband")
+
+                                    # Brillouin Zone momentum indices (regular indices, no QNs)
+                                    ikx = Index(length(kx_grid), "kx")
+                                    iky = Index(length(ky_grid), "ky")
+
+                                    return Dict(
+                                        "spin" => s, "valley" => k, "sublattice" => λ,
+                                        "ll" => n, "subband" => l, "kx" => ikx, "ky" => iky
+                                        )
+                                end
 

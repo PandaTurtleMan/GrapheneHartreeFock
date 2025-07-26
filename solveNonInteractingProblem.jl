@@ -21,119 +21,111 @@ include("matrixElements.jl")
 
 export Hamiltonian
 
-function Hamiltonian(k_x, k_y, levels, projs, phi, p, q, L)
+
+function Hamiltonian(k_x, k_y, levels, harmonics, phi, p, q, L, zeeman_vector, valley_zeeman_vector, m)
     g = gcd(p, q)
-    p = div(p, g)
-    q = div(q, g)
-
-    matrix_size = 2*levels*p
-    hamiltonian = zeros(ComplexF64, matrix_size, matrix_size)
-
-    # Precompute common values
-    #fourierdict = fourier_dict(mnrange)
-    B = (p/q)/L^2
-
-    # Optimized matrix construction
-    @inbounds Threads.@threads for i in 1:matrix_size
-        S1 = iseven(i) ? -1 : 1
-        l1 = div(i-1, 2*levels) + 1
-        m = div(mod(i-1, 2*levels), 2)
-
-        for j in 1:matrix_size
-            S2 = iseven(j) ? -1 : 1
-            l2 = div(j-1, 2*levels) + 1
-            n = div(mod(j-1, 2*levels), 2)
-            for z in 1:length(projs)
-                #dummy valley indices!
-                hamiltonian[i,j] += projs[z]*matrixElement(k_x,k_y,S1,S2,l1,l2,m,n,z,B,L,0,0)
-            end
-            if m == n && S1 == S2 && l1 == l2
-                hamiltonian[i,j] += evaluateLandauLevelMatrixElements(k_x,k_y,m,n,B,S1,S2)
-            end
-
-        end
-    end
-    return Hermitian(hamiltonian)
-end
-
-#hamiltonian with spin, can turn on Zeeman shift
-function spinfulHamiltonian(k_x,k_y,levels,projs,phi,p,q,L,BohrMagneton)
-    g = gcd(p, q)
-    p = div(p, g)
-    q = div(q, g)
-
-    matrix_size = 4*levels*p
-    hamiltonian = zeros(ComplexF64, matrix_size, matrix_size)
-
-    # Precompute common values
-    #fourierdict = fourier_dict(mnrange)
-    B = (p/q)/L^2
-
-    # Optimized matrix construction
-    @inbounds Threads.@threads for i in 1:matrix_size
-        S1 = iseven(i) ? -1 : 1
-        spin1 = isOddMod4(i) ? -1 : 1
-        l1 = div(i-1, 4*levels) + 1
-        m = div(mod(i-1, 4*levels), 4)
-
-        for j in 1:matrix_size
-            S2 = iseven(j) ? -1 : 1
-            spin2 = isOddMod4(j) ? -1 : 1
-            l2 = div(j-1, 4*levels) + 1
-            n = div(mod(j-1, 4*levels), 4)
-            if spin1 != spin2
-                hamiltonian[i,j] = 0
-                continue
-            end
-
-            for z in 1:length(projs)
-                hamiltonian[i,j] += projs[z]*matrixElement(k_x,k_y,S1,S2,l1,l2,m,n,z,B,L,0,0)
-            end
-            if m == n && S1 == S2 && l1 == l2 && spin1 == spin2
-                hamiltonian[i,j] += evaluateLandauLevelMatrixElements(k_x,k_y,m,n,B,S1,S2)
-            end
-            if spin1 == spin2
-               hamiltonian[i,j] += spin1*0.5*BohrMagneton*B
-            end
-            if spin1 != spin2
-                hamiltonian[i,j] = 0
-            end
-
-        end
-    end
-    return Hermitian(hamiltonian)
-end
-
-#hamiltonian with valley, block diagonal in valley index (for now)
-function spinfulValleyfulHamiltonian(k_x, k_y, levels, projs, phi, p, q, L, BohrMagneton)
-    g = gcd(p, q)
-    p = div(p, g)
-    q = div(q, g)
+    p_eff, q_eff = div(p, g), div(q, g)
     matrix_size = 8 * levels * p + 4 * p
     hamiltonian = zeros(ComplexF64, matrix_size, matrix_size)
     B = (p / q) / L^2
 
     for i in 1:matrix_size
-        valley1, l1, spin_sign1, n1, S1 = decompose_index_valleyful(i, p, levels)
+        valley1, l1, spin1, n1, S1 = decompose_index_valleyful(i, p, levels)
+        lambda1 = (n1 == 0) ? 0 : S1 # Sublattice component for wavefunction
+
         for j in 1:matrix_size
-            valley2, l2, spin_sign2, n2, S2 = decompose_index_valleyful(j, p, levels)
-            if valley1 != valley2 || spin_sign1 != spin_sign2
-                hamiltonian[i, j] = 0
-                continue
-            end
-            for z in 1:length(projs)
-                hamiltonian[i, j] += projs[z] * matrixElement(k_x, k_y, S1, S2, l1, l2, n1, n2, z, B, L, valley1, valley2)
-            end
-            if n1 == n2 && S1 == S2 && l1 == l2
-                hamiltonian[i, j] += evaluateLandauLevelMatrixElements(k_x, k_y, n1, n2, B, S1, S2)
-            end
+            valley2, l2, spin2, n2, S2 = decompose_index_valleyful(j, p, levels)
+            lambda2 = (n2 == 0) ? 0 : S2
+
+            # 1. External Potential Term (from C4 harmonics)
+            potential_term = matrixElement(k_x, k_y, n1, n2, l1, l2, lambda1, lambda2, spin1, spin2, valley1, valley2, L, p, q, harmonics)
+            hamiltonian[i, j] += potential_term
+
+            # 2. On-site terms (diagonal in all quantum numbers)
             if i == j
-                hamiltonian[i, j] += spin_sign1 * 0.5 * BohrMagneton * B
+                # Kinetic Energy (Landau Levels)
+                hamiltonian[i, j] += evaluateLandauLevelMatrixElement(n1, B, lambda1, m)
+
+                # S_z and T_z Zeeman terms
+                hamiltonian[i, j] += 0.5 * zeeman_vector[3] * spin1
+                hamiltonian[i, j] += 0.5 * valley_zeeman_vector[3] * valley1
+            end
+
+            # 3. Off-diagonal Zeeman terms (spin-flipping)
+            if valley1 == valley2 && l1 == l2 && n1 == n2 && S1 == S2 && spin1 != spin2
+                # S_x term
+                hamiltonian[i, j] += 0.5 * zeeman_vector[1]
+                # S_y term (s1=1, s2=-1 means <up|H|down>)
+                if spin1 == 1 && spin2 == -1
+                    hamiltonian[i, j] -= 0.5im * zeeman_vector[2]
+                else # (s1=-1, s2=1 means <down|H|up>)
+                    hamiltonian[i, j] += 0.5im * zeeman_vector[2]
+                end
+            end
+
+            # 4. Off-diagonal Valley Zeeman terms (valley-flipping)
+            if spin1 == spin2 && l1 == l2 && n1 == n2 && S1 == S2 && valley1 != valley2
+                # T_x term
+                hamiltonian[i, j] += 0.5 * valley_zeeman_vector[1]
+                # T_y term (v1=1, v2=-1 means <K|H|K'>)
+                if valley1 == 1 && valley2 == -1
+                    hamiltonian[i, j] -= 0.5im * valley_zeeman_vector[2]
+                else # (v1=-1, v2=1 means <K'|H|K>)
+                    hamiltonian[i, j] += 0.5im * valley_zeeman_vector[2]
+                end
             end
         end
     end
     return Hermitian(hamiltonian)
 end
+
+"""
+ITensorHamiltonian(indices, params; bias_terms=Dict())
+
+Constructs the non-interacting Hamiltonian H0 as a BlockSparse ITensor.
+Can optionally add bias terms for generating initial states.
+    """
+    function ITensorHamiltonian(indices, p, q, L, m_eff; bias_params=Dict())
+        s, k, λ, n, l = indices["spin"], indices["valley"], indices["sublattice"], indices["ll"], indices["subband"]
+
+        H0 = ITensor(s', k', λ', n', l', s, k, λ, n, l)
+
+        B = (p / q) / L^2
+        zeeman_vec = get(bias_params, "zeeman", [0.0, 0.0, 0.0])
+        valley_zeeman_vec = get(bias_params, "valley_zeeman", [0.0, 0.0, 0.0])
+        mass_term = get(bias_params, "mass", 0.0)
+
+        for s_val in 1:dim(s), k_val in 1:dim(k), λ_val in 1:dim(λ), n_val in 1:dim(n), l_val in 1:dim(l)
+            # Diagonal terms
+            spin_sign = (s_val == 1) ? 1 : -1
+            valley_sign = (k_val == 1) ? 1 : -1
+            sublattice_sign = (λ_val == 1) ? 1 : -1
+            ll_idx = n_val - 1 # 0-indexed
+
+            # 1. Kinetic Energy
+            diag_val = v_F * sqrt(2 * e * B * ll_idx) # Simplified Landau Level energy
+
+            # 2. Biasing terms (for initial state generation)
+            diag_val += 0.5 * zeeman_vec[3] * spin_sign
+            diag_val += 0.5 * valley_zeeman_vec[3] * valley_sign
+            diag_val += mass_term * sublattice_sign # Onsite mass term
+
+            H0[s'(s_val), k'(k_val), λ'(λ_val), n'(n_val), l'(l_val),
+               s(s_val), k(k_val), λ(λ_val), n(n_val), l(l_val)] = diag_val
+        end
+
+        # Placeholder for off-diagonal bias terms (Sx, Sy, etc.) if needed
+
+        return H0
+    end
+
+    # Placeholder for ionic correction
+    function ionic_background_correction(indices, params)
+        # This function would compute the ionic potential contribution
+        # and return it as a rank-2 ITensor with the same indices as H0.
+        s, k, λ, n, l = indices["spin"], indices["valley"], indices["sublattice"], indices["ll"], indices["subband"]
+        return ITensor(s', k', λ', n', l', s, k, λ, n, l) # Return zero tensor for now
+    end
 
 
 function spectrum(k_x, k_y, levels, projs, phi, p, q, L)

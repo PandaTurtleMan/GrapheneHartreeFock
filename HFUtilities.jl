@@ -1,5 +1,6 @@
 
 using LinearAlgebra
+using Random
 
 #diagonalize matrix utility
 function extractMatrixOfEigenvectors(HHF)
@@ -106,28 +107,37 @@ end
 
     function DIISErrorCoeffs(errorvecs, maxErrors=8)
         m = min(length(errorvecs), maxErrors)
-        m < 2 && return Float64[]  # Need at least 2 vectors
+        # DIIS requires at least two error vectors to be meaningful.
+        m < 2 && return Float64[]
 
-        # Take last m error vectors
+        # Take the last m error vectors from the history.
         evecs = errorvecs[end-m+1:end]
-        B = zeros(m+1, m+1)
 
-        # Build DIIS matrix
+        # Build the (m+1)x(m+1) DIIS matrix.
+        B = zeros(m + 1, m + 1)
         for i in 1:m
-            for j in 1:m
-                B[i, j] = real(tr(evecs[i] * evecs[j]))
+            for j in i:m # Only compute upper triangle, since B is symmetric
+                dot_product = real(tr(evecs[i]' * evecs[j]))
+                B[i, j] = dot_product
+                B[j, i] = dot_product
             end
-            B[i, m+1] = 1
-            B[m+1, i] = 1
         end
-        B[m+1, m+1] = 0
 
-        # Solve constraint equation
-        b = zeros(m+1)
-        b[m+1] = 1
+        # Add constraints for the Lagrange multiplier.
+        B[1:m, m + 1] .= 1.0
+        B[m + 1, 1:m] .= 1.0
+        # B[m+1, m+1] is already 0.0
 
-        # First try using regular matrix inverse
-        c = B / b'
+        # Define the right-hand side of the equation B*c = b
+        b = zeros(m + 1)
+        b[m + 1] = 1.0
+
+        # --- FIXES ---
+        # 1. Solve B*c = b using the pseudoinverse for numerical stability.
+        # 2. This replaces the incorrect "c = B / b'"
+        c = pinv(B) * b
+
+        # Return the first m coefficients, excluding the Lagrange multiplier.
         return c[1:m]
     end
 
@@ -352,6 +362,350 @@ function matrixLinkVariable(i1,j1,i2,j2,filledBandsGrid,orbitalsGroup)
     end
     return linkVariable
 
+end
+
+"""
+Pre-computes the form-factor tensor S(q).
+"""
+function precomputeFormFactorTensorExchangeTerm(indices, qx_grid, qy_grid, xreciVectors,yreciVectors,L, l_B)
+    n, λ = indices["ll"], indices["sublattice"]
+    iqx = Index(length(qx_grid), "qx_momentum")
+    iqy = Index(length(qy_grid), "qy_momentum")
+    xGVectors = Index(length(xreciVectors),"xreciVector")
+    yGVectors = Index(length(yreciVectors),"yreciVector")
+    K = 2*pi/L
+    S = ITensor(n', λ', n, λ, iqx,iqy,xGVectors,yGvectors)
+
+    @showprogress "Pre-computing Form Factor S(q)..." for qx_idx in 1:dim(iqx),qy_idx in 1:dim(iqy), Gx_idx in 1:dim(xGVectors),Gy_idx in 1:dim(yGVectors)
+        qx = qx_grid[qx_idx]
+        qy = qy_grid[qy_idx]
+        Gx = xreciVectors[Gx_idx]
+        Gy = yreciVectors[Gy_idx]
+        for n1_idx in 1:dim(n), n2_idx in 1:dim(n), λ1_idx in 1:dim(λ), λ2_idx in 1:dim(λ)
+            n1, n2 = n1_idx - 1, n2_idx - 1
+            λ1, λ2 = (λ1_idx == 1) ? 1 : -1, (λ2_idx == 1) ? 1 : -1
+
+            val = grapheneLandauFourierMatrixElement(qx+K*Gx, qy+Gy*K, n1, n2, l_B, λ1, λ2)
+            S[n'(n1_idx), λ'(λ1_idx), n(n2_idx), λ(λ2_idx), iq(q_idx),Gvectors(G_idx)] = val
+        end
+    end
+    return S
+end
+
+function precomputeFormFactorTensorDirectTerm(indices, xreciVectors,yreciVectors, L,l_B,Q)
+    n, λ = indices["ll"], indices["sublattice"]
+    K = 2*pi/L
+    xGVectors = Index(length(xreciVectors),"xreciVector")
+    yGVectors = Index(length(yreciVectors),"yreciVector")
+    S = ITensor(n', λ', n, λ, xGVectors,yGVectors)
+
+    @showprogress "Pre-computing Form Factor S(q)..." for Gx_idx in 1:dim(xGVectors),Gy_idx in 1:dim(yGVectors)
+
+        Gx = xreciVectors[Gx_idx]
+        Gy = yreciVectors[Gy_idx]
+        for n1_idx in 1:dim(n), n2_idx in 1:dim(n), λ1_idx in 1:dim(λ), λ2_idx in 1:dim(λ)
+            n1, n2 = n1_idx - 1, n2_idx - 1
+            λ1, λ2 = (λ1_idx == 1) ? 1 : -1, (λ2_idx == 1) ? 1 : -1
+
+            val = grapheneLandauFourierMatrixElement(qx+K*Gx, qy+K*Gy, n1, n2, l_B, λ1, λ2)
+            S[n'(n1_idx), λ'(λ1_idx), n(n2_idx), λ(λ2_idx), xGvectors(Gx_idx),yGvectors(Gy_idx)] = val
+        end
+    end
+    return S
+end
+
+#fix this and add other tensors! make sure to refactor code to include ep parameter
+
+function precomputePotentialTensorExchangeTerm(qx_grid,qy_grid,xreciVectors,yreciVectors,screeningFn,ε,L,Q_x,Q_y)
+    iqx = Index(length(qx_grid), "qxMomentum")
+    iqy = Index(length(qy_grid), "qyMomentum")
+    xGVectors = Index(length(reciVectors),"xreciVector")
+    yGVectors = Index(length(reciVectors),"yreciVector")
+    K = 2*pi/L
+    V = ITensor(iqx,iqy,xGVectors,yGVectors)
+    @showprogress "Pre-computing Potential V(q)..." for qx_idx in 1:dim(iqx),qy_idx in 1:dim(iqy), Gx_idx in 1:dim(xGVectors),Gy_idx in 1:dim(yGVectors)
+        qx = qx_grid[qx_idx]
+        qy = qy_grid[qy_idx]
+        Gx = xreciVectors[Gx_idx]
+        Gy = yreciVectors[Gy_idx]
+        # Example: Coulomb potential 1/|q|
+        q_norm = sqrt((qx+K*Gx)^2 + (qy+K*Gy)^2)
+        V[iq(q_idx),GVectors(G_idx)] =  (2 * pi / q_norm)*screeningFn(q_x+Gx*K,q_y+Gy*K)/ε
+    end
+    return V
+end
+
+function precomputePotentialTensorDirectTerm(xreciVectors,yreciVectors,screeningFn,ε,L,Q_x,Q_y)
+
+    xGVectors = Index(length(reciVectors),"xreciVector")
+    yGVectors = Index(length(reciVectors),"yreciVector")
+    K = 2*pi/L
+    V = ITensor(xGVectors,yGvectors)
+    @showprogress "Pre-computing Potential V(q)..." for Gx_idx in 1:dim(xGVectors),Gy_idx in 1:dim(yGVectors)
+
+        Gx = xreciVectors[Gx_idx]
+        Gy = yreciVectors[Gy_idx]
+
+
+        q_norm = sqrt((Q_x+Gx)^2 + (Q_y+Gy)^2)
+        V[GVectors(G_idx)] =  (2 * pi / q_norm)*screeningFn(Gx*K+Q_x,Gy*K+Q_y)/ε
+    end
+    return V
+end
+
+function exchangeTermPhase1(qx_grid,qy_grid,xreciVectors,subbands,L,l_B,q,Q_x,Q_y)
+    K = 2*pi/L
+    xGVectors = Index(length(reciVectors),"xreciVector")
+    iqx = Index(length(qx_grid),"qxMomentum")
+    iqy = Index(length(qy_grid),"qyMomentum")
+    subbands3 = Index(length(subBands),"subBand3")
+    subbands4 = Index(length(subBands),"subBand4")
+    phase1 = ITensor(iqx,iqy,xGvectors,subbands3,subbands4)
+
+    @showprogress "Pre-computing phase 1..." for  l3_idx in 1:dim(subbands),l4_idx in 1:dim(subbands),qx_idx in 1:dim(iqx),qy_idx in 1:dim(iqy), Gx_idx in 1:dim(xGvectors)
+        Gx = xreciVectors[Gx_idx]
+        l4 = subbands4[l4_idx]
+        l3 = subbands3[l3_idx]
+        qx = iqx[qx_idx]
+        qy = iqy[qy_idy]
+
+        phase1[iqx(qx_idx),iqy(qy_idx),xGVectors(Gx_idx),subbands3(l3_idx),subbands4(l4_idx)] = exp(im*(q_x+K*G_x)*l_B^2*(Q_y - qy - (l4-l3)*K/q))
+
+    end
+    return phase1
+end
+
+function exchangeTermPhase2(kx4_grid,yreciVectors,subBands,L,p,q,Q_x,Q_y)
+
+    ikx4 = Index(length(kx4_grid), "kx4Momentum")
+    yGVectors = Index(length(reciVectors),"yreciVector")
+    subbands1 = Index(length(subBands),"subBand1")
+    subbands3 = Index(length(subBands),"subBand3")
+    phase2 = ITensor(ikx4,yGVectors,subbands1,subbands3)
+
+    @showprogress "Pre-computing phase 2..." for  l1_idx in 1:dim(subbands),l3_idx in 1:dim(subbands),kx4_idx in 1:dim(ikx4), Gy_idx in 1:dim(yGvectors)
+        Gy = yreciVectors[Gy_idx]
+        l3 = subbands3[l3_idx]
+        l1 = subbands1[l1_idx]
+        if mod(l3 - l1 + q*Gy,p) != 0
+            phase2[ikx4(kx4_idx),GVectors(G_idx),subbands1(l1_idx),subbands3(l3_idx)] = 0
+        else
+            kx4 = kx_grid[kx_idx]
+            phase2[ikx4(kx4_idx),GVectors(G_idx),subbands1(l1_idx),subbands3(l3_idx)] = exp(im*L*(kx4-Q_x)*(l3-l1+q*Gy)/p)
+        end
+    end
+    return phase2
+end
+
+function exchangeTermPhase3(kx4_grid,qx_grid,yreciVectors,subBands,L,p,q,Q_x,Q_y)
+    iqx = Index(length(qx_grid),"qxMomentum")
+    ikx4 = Index(length(kx4_grid), "kx4Momentum")
+    yGVectors = Index(length(reciVectors),"yreciVector")
+    subbands2 = Index(length(subBands),"subBand2")
+    subbands4 = Index(length(subBands),"subBand4")
+    phase3 = ITensor(ikx4,iqx,yGVectors,subbands2,subbands4)
+
+    @showprogress "Pre-computing phase 3..." for  l1_idx in 1:dim(subbands),l3_idx in 1:dim(subbands),kx4_idx in 1:dim(ikx4), Gy_idx in 1:dim(yGvectors), qx_idx in 1:dim(iqx)
+        Gy = yreciVectors[Gy_idx]
+        qx = qx_grid[qx_idx]
+        l3 = subbands3[l3_idx]
+        l1 = subbands1[l1_idx]
+        if mod(l4 - l2 - q*Gy,p) != 0
+            phase3[ikx4(kx4_idx),iqx(qx_idx),GVectors(G_idx),subbands2(l2_idx),subbands4(l4_idx)] = 0
+        else
+            kx4 = kx_grid[kx_idx]
+            phase3[ikx4(kx4_idx),iqx(qx_idx),GVectors(G_idx),subbands2(l2_idx),subbands4(l4_idx)] = exp(im*L*(kx4+q_x)*(l4-l2-q*Gy)/p)
+        end
+    end
+    return phase3
+end
+
+function directTermPhase1(ky3_grid,ky4_grid,xreciVectors,subbands,L,l_B,q,Q_x,Q_y)
+    K = 2*pi/L
+    xGVectors = Index(length(reciVectors),"xreciVector")
+    iky3x = Index(length(ky3_grid),"ky3Momentum")
+    iky4x = Index(length(ky4_grid),"ky4Momentum")
+    subbands3 = Index(length(subBands),"subBand3")
+    subbands4 = Index(length(subBands),"subBand4")
+    phase1 = ITensor(iky3x,iky4y,xGvectors,subbands3,subbands4)
+
+    @showprogress "Pre-computing phase 1..." for  l3_idx in 1:dim(subbands),l4_idx in 1:dim(subbands),ky3_idx in 1:dim(iky3x),ky4_idx in 1:dim(iky4x), Gx_idx in 1:dim(xGvectors)
+        Gx = xreciVectors[Gx_idx]
+        l4 = subbands4[l4_idx]
+        l3 = subbands3[l3_idx]
+        ky3 = ky3_grid[ky3_idx]
+        ky4 = ky4_grid[ky4_idx]
+
+        phase1[iky3(iky3_idx),iky4(iky4_idx),xGVectors(Gx_idx),subbands3(l3_idx),subbands4(l4_idx)] = exp(im*(Q_x+K*G_x)*l_B^2*(ky4-ky3- (l4-l3)*K/q))
+
+    end
+    return phase1
+end
+
+function directTermPhase2(kx3_grid,yreciVectors,subBands,L,p,q,Q_x,Q_y)
+
+    ikx3 = Index(length(kx3_grid), "kx4Momentum")
+    yGVectors = Index(length(reciVectors),"yreciVector")
+    subbands1 = Index(length(subBands),"subBand1")
+    subbands3 = Index(length(subBands),"subBand3")
+    phase2 = ITensor(ikx3,yGVectors,subbands1,subbands3)
+
+    @showprogress "Pre-computing phase 2..." for  l1_idx in 1:dim(subbands),l3_idx in 1:dim(subbands),kx3_idx in 1:dim(ikx3), Gy_idx in 1:dim(yGvectors)
+        Gy = yreciVectors[Gy_idx]
+        l3 = subbands3[l3_idx]
+        l1 = subbands1[l1_idx]
+        if mod(l3 - l1 + q*Gy,p) != 0
+            phase2[ikx4(kx3_idx),GVectors(G_idx),subbands1(l1_idx),subbands3(l3_idx)] = 0
+        else
+            kx3 = kx3_grid[kx3_idx]
+            phase2[ikx3(kx3_idx),GVectors(G_idx),subbands1(l1_idx),subbands3(l3_idx)] = exp(im*L*(kx3-Q_x)*(l3-l1+q*Gy)/p)
+        end
+    end
+    return phase2
+end
+
+function directTermPhase3(kx4_grid,yreciVectors,subBands,L,p,q,Q_x,Q_y)
+
+    ikx4 = Index(length(kx4_grid), "kx4Momentum")
+    yGVectors = Index(length(reciVectors),"yreciVector")
+    subbands2 = Index(length(subBands),"subBand2")
+    subbands4 = Index(length(subBands),"subBand4")
+    phase3 = ITensor(ikx4,yGVectors,subbands2,subbands4)
+
+    @showprogress "Pre-computing phase 3..." for  l1_idx in 1:dim(subbands),l3_idx in 1:dim(subbands),kx4_idx in 1:dim(ikx4), Gy_idx in 1:dim(yGvectors), qx_idx in 1:dim(iqx)
+        Gy = yreciVectors[Gy_idx]
+        l3 = subbands3[l3_idx]
+        l1 = subbands1[l1_idx]
+        if mod(l4 - l2 - q*Gy,p) != 0
+            phase3[ikx4(kx4_idx),GVectors(G_idx),subbands2(l2_idx),subbands4(l4_idx)] = 0
+        else
+            kx4 = kx_grid[kx_idx]
+            phase3[ikx4(kx4_idx),GVectors(G_idx),subbands2(l2_idx),subbands4(l4_idx)] = exp(im*L*(kx4+Q_x)*(l4-l2-q*Gy)/p)
+        end
+    end
+    return phase1
+end
+
+function directTerm(potentialTensor,formFactorTensor,phase1Tensor,phase2Tensor,phase3Tensor,Δ,Qx,Qy)
+    return Δ(n4,λ4,S4,K4,l4,n2,λ2,S2,K2,l4,kx4,ky4)*potentialTensor(Gx,Gy)*formFactorTensor1(n1,λ1,n3,λ3,Gx,Gy)*formFactorTensor2(n2,λ2,n4,λ4,-Gx,-Gy)*phase1(ky3,ky4,Gx,l3,l4)*phase2(kx3,Gy,l1,l3) *phase3(kx4,Gy,l2,l4)
+end
+
+function exchangeTerm(potentialTensor,formFactorTensor,phase1Tensor,phase2Tensor,phase3Tensor,Δ,Qx,Qy)
+    return Δ(n3,λ3,S3,K3,l3,n2,λ2,S2,K2,l2,kx4+q_x,ky4+q_x)*potentialTensor(qx,qy,Gx,Gy)*formFactorTensor1(n1,λ1,n3,λ3,qx,qy,Gx,Gy)*formFactorTensor2(n2,λ2,n4,λ4,-qx,-qy,-Gx,-Gy)*phase1(ky3,ky4,qx,qy,Gx,l3,l4)*phase2(kx4,Gy,l1,l3) *phase3(kx4,qx,Gy,l2,l4)
+end
+
+function computeHFHamiltonian(potentialTensor,formFactorTensor,phase1Tensor,phase2Tensor,phase3Tensor,Δ,Qx,Qy)
+    return directTerm(potentialTensor,formFactorTensor,phase1Tensor,phase2Tensor,phase3Tensor,Δ,Qx,Qy) + exchangeTerm(potentialTensor,formFactorTensor,phase1Tensor,phase2Tensor,phase3Tensor,Δ,Qx,Qy)
+end
+
+
+
+
+
+function random_binary_density_matrix(N::Int, trace_val::Int)
+    # --- Input Validation ---
+    if N <= 0
+        throw(ArgumentError("Matrix dimension N must be positive."))
+    end
+    if trace_val < 0
+        throw(ArgumentError("Trace must be non-negative."))
+    end
+    if trace_val > N
+        throw(ArgumentError("Trace cannot exceed matrix dimension N."))
+    end
+
+    # --- Step 1: Generate a random orthonormal basis (eigenvectors) ---
+    # Start with a random complex matrix from a Gaussian distribution.
+    A = randn(ComplexF64, N, N)
+    # Construct a random Hermitian matrix from A. This ensures the eigenvectors
+    # form a random basis.
+    H_rand = A + A'
+        # The eigenvectors of any Hermitian matrix form a complete orthonormal basis.
+    F = eigen(H_rand)
+    U = F.vectors # This is our random unitary matrix (basis)
+
+    # --- Step 2: Create binary eigenvalues ---
+    # Create eigenvalue vector with exactly trace_val ones and (N - trace_val) zeros
+    binary_eigs = zeros(Float64, N)
+    binary_eigs[1:trace_val] .= 1.0
+
+    # Randomly shuffle the eigenvalues to avoid bias in which eigenvectors
+    # correspond to the non-zero eigenvalues
+    shuffle!(binary_eigs)
+
+    # --- Step 3: Construct the density matrix ---
+    # Combine the random basis (U) with the binary eigenvalues.
+    # The resulting matrix Δ = U * Λ * U' is guaranteed to have exactly
+    # trace_val eigenvalues equal to 1 and (N - trace_val) eigenvalues equal to 0.
+    Δ = U * Diagonal(binary_eigs) * U'
+
+# Ensure the output is explicitly Hermitian to maintain type stability and
+# leverage optimized methods for Hermitian matrices.
+return Hermitian(Δ)
+end
+
+function compute_and_print_order_parameters(Δ::AbstractMatrix, levels::Int, p::Int)
+    matrix_size = size(Δ, 1)
+    nF = round(Int, real(tr(Δ)))
+    if nF == 0
+        println("No particles, all order parameters are zero.")
+        return
+    end
+    norm = 1.0 / nF
+
+    # Initialize expectation values
+    ops = Dict(
+        "FM_Sx" => 0.0im, "FM_Sy" => 0.0im, "FM_Sz" => 0.0im,
+        "AFM_Sx" => 0.0im, "AFM_Sy" => 0.0im, "AFM_Sz" => 0.0im,
+        "VFM_Tx" => 0.0im, "VFM_Ty" => 0.0im, "VFM_Tz" => 0.0im,
+        "VAFM_Tx" => 0.0im, "VAFM_Ty" => 0.0im, "VAFM_Tz" => 0.0im,
+        "Sublattice_Pol" => 0.0im
+        )
+
+    for i in 1:matrix_size
+        v1, l1, s1, n1, S1 = decompose_index_valleyful(i, p, levels)
+
+        # Diagonal operators (Sz, Tz, Sublattice)
+        ops["FM_Sz"] += Δ[i, i] * s1
+        ops["VFM_Tz"] += Δ[i, i] * v1
+        # For n>0, S1 is sublattice sign. For n=0, S1=v1, so we must be careful.
+        sublattice_sign = (n1 > 0) ? S1 : 0 # No sublattice DoF for n=0
+        ops["Sublattice_Pol"] += Δ[i, i] * sublattice_sign
+        ops["AFM_Sz"] += Δ[i, i] * s1 * sublattice_sign
+        ops["VAFM_Tz"] += Δ[i, i] * v1 * sublattice_sign
+
+        # Off-diagonal operators (Sx, Sy, Tx, Ty)
+        # Find partner states with one flipped quantum number
+        j_spin = find_index_valleyful(v1, l1, -s1, n1, S1, p, levels)
+        if j_spin != -1
+            ops["FM_Sx"] += Δ[j_spin, i] # <i|c_j^+ c_i|i> ~ <S_x>
+            ops["FM_Sy"] += Δ[j_spin, i] * im * s1 # <i|c_j^+ c_i|i> ~ <S_y>
+            ops["AFM_Sx"] += Δ[j_spin, i] * sublattice_sign
+            ops["AFM_Sy"] += Δ[j_spin, i] * im * s1 * sublattice_sign
+        end
+
+        j_valley = find_index_valleyful(-v1, l1, s1, n1, S1, p, levels)
+        if j_valley != -1
+            ops["VFM_Tx"] += Δ[j_valley, i]
+            ops["VFM_Ty"] += Δ[j_valley, i] * im * v1
+            ops["VAFM_Tx"] += Δ[j_valley, i] * sublattice_sign
+            ops["VAFM_Ty"] += Δ[j_valley, i] * im * v1 * sublattice_sign
+        end
+    end
+
+    println("\n--- Hartree-Fock Order Parameters ---")
+    println("Normalization Factor (1/nF): $norm")
+    println("\nSpin Polarization:")
+    @printf "  - Ferromagnetic (FM):   Sx=%.4f, Sy=%.4f, Sz=%.4f\n" real(norm*ops["FM_Sx"]) real(norm*ops["FM_Sy"]) real(0.5*norm*ops["FM_Sz"])
+    @printf "  - Antiferro (AFM):      Sx=%.4f, Sy=%.4f, Sz=%.4f\n" real(norm*ops["AFM_Sx"]) real(norm*ops["AFM_Sy"]) real(0.5*norm*ops["AFM_Sz"])
+
+    println("\nValley Polarization:")
+    @printf "  - Valley-FM (VFM):      Tx=%.4f, Ty=%.4f, Tz=%.4f\n" real(norm*ops["VFM_Tx"]) real(norm*ops["VFM_Ty"]) real(0.5*norm*ops["VFM_Tz"])
+    @printf "  - Valley-AFM (VAFM):    Tx=%.4f, Ty=%.4f, Tz=%.4f\n" real(norm*ops["VAFM_Tx"]) real(norm*ops["VAFM_Ty"]) real(0.5*norm*ops["VAFM_Tz"])
+
+    println("\nSublattice Polarization:")
+    @printf "  - <Σ_z>: %.4f\n" real(norm*ops["Sublattice_Pol"])
+    println("-------------------------------------\n")
 end
 
 
