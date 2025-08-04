@@ -285,19 +285,19 @@ return Phase_X
 
                 #contract over k first
                 Phase_D_slice = Phase_D_full * setelt(iQx)
-                print("\n phase indices,",inds(Phase_D_slice))
+
                 D = Δ*Phase_D_slice
-                print("\n indices after phase contraction,",inds(D))
+
 
 
                 # --- Slice all q-dependent tensors at q = Q ---
-                print("\n V_full",inds(V_full))
+
                 V_slice = V_full * setelt(iQx') * setelt(iQy')
-                print("\n V_slice,",inds(V_slice))
+
                 S_core_slice = S_core_full * setelt(iQx') * setelt(iQy')
-                print("\n S_core_slice,",inds(S_core_slice))
+
                 S_neg_q_core_slice = S_neg_q_core_full * setelt(iQx'') * setelt(iQy'')
-                print("\n S_neg_q_core_slice,",inds(S_neg_q_core_slice))
+
 
 
                 #contact over G, again use deltas to avoid premature contractions
@@ -305,23 +305,23 @@ return Phase_X
                 #first add the V tensor
                 D = D * delta(iGx,iGx',iGx'')
                 D = D* delta(iGy,iGy',iGy'')
-                print("\n indices before potential contraction",inds(D))
+
                 prime!(V_slice,iGx,iGy)
                 D = D * V_slice
-                print("\n indices after potential contraction,",inds(D))
+
 
                 #next is S tensor
                 D = D * delta(iGx,iGx',iGx'')
                 D = D* delta(iGy,iGy',iGy'')
                 D = D * S_core_slice
-                print("\n indices after S contraction,",inds(D))
+
 
                 #last is S neg tensor, now we just contract
                 D = D*S_neg_q_core_slice
-                print("\n indices after final contraction,",inds(D))
 
+                #finally the deltas
                 D = D*Deltas
-                print("\n indices after deltas,",inds(D))
+
 
                 # The sum over the internal momentum k4 was handled by the tensor contraction.
                 return D
@@ -355,60 +355,42 @@ return Phase_X
 
                 # The density matrix is evaluated at a shifted momentum k' = k - q - Q.
                 Δ = replaceinds(Δ, (orbital_indices'..., orbital_indices...), (Γ3..., Γ2...))
-                print("\n phase indices,",inds(Phase_X))
+
                 E = Δ * Shift
-                #print("\n Norm of E:", norm(E))
 
-                #print("\n Norm of E:", norm(E))
-
-                print("\n shifted indices 1,",inds(E))
 
                 E = E*delta(ikx,ikx',ikx'')
                 #print("\n Norm of E:", norm(E))
-                print("\n shifted indices 2,",inds(E))
+
                 E=E*δ(iky,iky',iky'')
                 #print("\n Norm of E:", norm(E))
-                print("\n shifted indices 3,",inds(E))
-                print("\n delta inds", δ(iqx,iqx',iqx''))
+
                 E=E*δ(iqx,iqx',iqx'')
                 #print("\n Norm of E:", norm(E))
-                print("\n shifted indices 4,",inds(E))
+
                 E=E*δ(iqy,iqy',iqy'')
                 #print("\n Norm of E:", norm(E))
-                print("\n shifted indices 5,",inds(E))
+
                 #now contract with phase tensor, deltas force a pointwise multplication over k,q
                 E = E*Phase_X
                 #print("\n Norm of E:", norm(E))
-                print("\n indices with phase,",inds(E))
+
 
                 #sequentially pointwise multiply each of the parts of the structure factor together with the term
                 E = E*delta(iqx,iqx',iqx'')*delta(iqy,iqy',iqy'')*delta(iGx,iGx',iGx'')*delta(iGy,iGy',iGy'')
-                print("\n indices with more deltas,",inds(E))
-                print("\n Norm of E:", norm(E))
+
                 E = E*VTensor
-                print("\n indices with more Vtensor,",inds(E))
-                print("\n Norm of E:", norm(E))
-                #print("\n indices after multiplication by potential tensor,",inds(E))
+
 
                 E = E*delta(iqx,iqx',iqx'')*delta(iqy,iqy',iqy'')*delta(iGx,iGx',iGx'')*delta(iGy,iGy',iGy'')
-                print("\n indices with more deltas again,",inds(E))
-                print("\n Norm of E:", norm(E))
+
                 E = E*STensor
-                print("\n indices with more STensor,",inds(E))
-                print("\n Norm of E:", norm(E))
-                #print("\n indices after multiplication by first structure tensor,",inds(E))
 
                 #this last guy will sum over q and G!
                 E = E*SNegTensor
-                print("\n indices after contracting over q and G",inds(E))
-                print("\n Norm of E:", norm(E))
 
                 #now the deltas
                 E = E*Deltas
-                print("\n Norm of E:", norm(E))
-
-                print("\n indices after all contractions,",inds(E))
-
 
                 # The final result is negated
                 return -1.0 * E
