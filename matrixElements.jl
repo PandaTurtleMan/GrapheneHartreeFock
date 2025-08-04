@@ -1,9 +1,12 @@
 import QuadGK
 import Kronecker
 import LinearAlgebra
+import AngleBetweenVectors
 include("Utilities.jl")
 
-
+function screening_fn(q_norm)
+    return tanh(q_norm)
+end
 
 function landauFourierMatrixElement(q_x,q_y,n_1,n_2,l_B)
     if n_1 < 0 || n_2 < 0
@@ -11,7 +14,7 @@ function landauFourierMatrixElement(q_x,q_y,n_1,n_2,l_B)
     end
     n,m = max(n_1,n_2),min(n_1,n_2)
     deltaN = n_1-n_2
-    theta = atan2(q_y/q_x)
+    theta = angle((qx,qy),(1,0))
     phaseFactor = exp(-0.5*im*(q_x*q_y*l_B^2) - i*deltaN*theta)
     return phaseFactor*laguerreTilde(abs(deltaN),m,0.5*(q_x^2+q_y^2)*l_B^2)
 end
@@ -22,7 +25,12 @@ function grapheneLandauFourierMatrixElement(q_x,q_y,n_1,n_2,l_B,lambda1,lambda2)
 end
 
 function fourierMatrixElement(k_x,k_y,n1,n2,l1,l2,lambda1,lambda2,spin1,spin2,valley1,valley2,L,p,q,q1,q2)
+
     K= 2*pi/L
+
+    k1 = k_x/K
+    k2 = k_y/K
+
     l_B = (q/p)*L
     if valley1 != valley2 || spin1 != spin2
         return 0
@@ -65,7 +73,6 @@ end
 function zeemanEnergy(bohrMagneton,B,spinSign)
     return bohrMagneton*B*spinSign
 end
-
 
 
 
