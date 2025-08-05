@@ -74,6 +74,30 @@ function zeemanEnergy(bohrMagneton,B,spinSign)
     return bohrMagneton*B*spinSign
 end
 
+function precomputeFormFactorTensorNonInt(levels, G_vectors, L, l_B)
+    # Create indices
+    i_n = Index(levels, "n")
+    i_λ = Index(2, "λ")  # sublattice index
+    iGx = Index(length(G_vectors[1]), "Gx")
+    iGy = Index(length(G_vectors[2]), "Gy")
+
+    S = ITensor(i_n, i_λ, i_n', i_λ', iGx, iGy)
+
+    K = 2π / L
+    for (Gx_idx, Gx) in enumerate(G_vectors[1]), (Gy_idx, Gy) in enumerate(G_vectors[2])
+        qx = Gx * K
+        qy = Gy * K
+
+        for n1 in 1:levels, n2 in 1:levels, λ1 in 1:2, λ2 in 1:2
+            λ1_val = λ1 == 1 ? 1 : -1
+            λ2_val = λ2 == 1 ? 1 : -1
+            val = grapheneLandauFourierMatrixElement(qx, qy, n1-1, n2-1, l_B, λ1_val, λ2_val)
+            S[i_n(n1), i_λ(λ1), i_n'(n2), i_λ'(λ2), iGx(Gx_idx), iGy(Gy_idx)] = val
+        end
+    end
+    return S, (i_n, i_λ, iGx, iGy)
+end
+
 
 
 

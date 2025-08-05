@@ -25,20 +25,20 @@ export Hamiltonian
 function Hamiltonian(k_x, k_y, levels, harmonics, phi, p, q, L, zeeman_vector, valley_zeeman_vector, m)
     g = gcd(p, q)
     p_eff, q_eff = div(p, g), div(q, g)
-    matrix_size = 8 * levels * p + 4 * p
+    matrix_size = 8 * levels * p_eff + 4 * p_eff
     hamiltonian = zeros(ComplexF64, matrix_size, matrix_size)
-    B = (p / q) / L^2
+    B = (p_eff / q_eff) / L^2
 
     for i in 1:matrix_size
-        valley1, l1, spin1, n1, S1 = decompose_index_valleyful(i, p, levels)
+        valley1, l1, spin1, n1, S1 = decompose_index_valleyful(i, p_eff, levels)
         lambda1 = (n1 == 0) ? 0 : S1 # Sublattice component for wavefunction
 
         for j in 1:matrix_size
-            valley2, l2, spin2, n2, S2 = decompose_index_valleyful(j, p, levels)
+            valley2, l2, spin2, n2, S2 = decompose_index_valleyful(j, p_eff, levels)
             lambda2 = (n2 == 0) ? 0 : S2
 
             # 1. External Potential Term (from C4 harmonics)
-            potential_term = matrixElement(k_x, k_y, n1, n2, l1, l2, lambda1, lambda2, spin1, spin2, valley1, valley2, L, p, q, harmonics)
+            potential_term = matrixElement(k_x, k_y, n1, n2, l1, l2, lambda1, lambda2, spin1, spin2, valley1, valley2, L, p_eff, q_eff, harmonics)
             hamiltonian[i, j] += potential_term
 
             # 2. On-site terms (diagonal in all quantum numbers)
@@ -64,7 +64,7 @@ function Hamiltonian(k_x, k_y, levels, harmonics, phi, p, q, L, zeeman_vector, v
             end
 
             # 4. Off-diagonal Valley Zeeman terms (valley-flipping)
-            if spin1 == spin2 && l1 == l2 && n1 == n2 && S1 == S2 && valley1 != valley2
+            if spin1 == spin2 && l1 == l2 && n1 == n2 && S1 == S2 && lambda1 == lambda2 && valley1 != valley2
                 # T_x term
                 hamiltonian[i, j] += 0.5 * valley_zeeman_vector[1]
                 # T_y term (v1=1, v2=-1 means <K|H|K'>)
@@ -79,46 +79,6 @@ function Hamiltonian(k_x, k_y, levels, harmonics, phi, p, q, L, zeeman_vector, v
     return Hermitian(hamiltonian)
 end
 
-"""
-ITensorHamiltonian(indices, params; bias_terms=Dict())
-
-Constructs the non-interacting Hamiltonian H0 as a BlockSparse ITensor.
-Can optionally add bias terms for generating initial states.
-    """
-    function ITensorHamiltonian(indices, p, q, L, m_eff; bias_params=Dict())
-        s, k, λ, n, l = indices["spin"], indices["valley"], indices["sublattice"], indices["ll"], indices["subband"]
-
-        H0 = ITensor(s', k', λ', n', l', s, k, λ, n, l)
-
-        B = (p / q) / L^2
-        zeeman_vec = get(bias_params, "zeeman", [0.0, 0.0, 0.0])
-        valley_zeeman_vec = get(bias_params, "valley_zeeman", [0.0, 0.0, 0.0])
-        mass_term = get(bias_params, "mass", 0.0)
-
-        for s_val in 1:dim(s), k_val in 1:dim(k), λ_val in 1:dim(λ), n_val in 1:dim(n), l_val in 1:dim(l)
-            # Diagonal terms
-            spin_sign = (s_val == 1) ? 1 : -1
-            valley_sign = (k_val == 1) ? 1 : -1
-            sublattice_sign = (λ_val == 1) ? 1 : -1
-            ll_idx = n_val - 1 # 0-indexed
-
-            # 1. Kinetic Energy
-            diag_val = v_F * sqrt(2 * e * B * ll_idx) # Simplified Landau Level energy
-
-            # 2. Biasing terms (for initial state generation)
-            diag_val += 0.5 * zeeman_vec[3] * spin_sign
-            diag_val += 0.5 * valley_zeeman_vec[3] * valley_sign
-            diag_val += mass_term * sublattice_sign # Onsite mass term
-
-            H0[s'(s_val), k'(k_val), λ'(λ_val), n'(n_val), l'(l_val),
-               s(s_val), k(k_val), λ(λ_val), n(n_val), l(l_val)] = diag_val
-        end
-
-        # Placeholder for off-diagonal bias terms (Sx, Sy, etc.) if needed
-
-        return H0
-    end
-
     # Placeholder for ionic correction
     function ionic_background_correction(indices, params)
         # This function would compute the ionic potential contribution
@@ -128,13 +88,13 @@ Can optionally add bias terms for generating initial states.
     end
 
 
-function spectrum(k_x, k_y, levels, projs, phi, p, q, L)
+function spectrum(k_x, k_y, levels, projs, phi, p, q, L)239
     hamiltonian = Hamiltonian(k_x, k_y, levels,projs, phi, p, q, L)
     return eigvals(hamiltonian)
 end
 
 #plots energy as a function of magnetic field at a given point in momentum space
-function plotBandEnergies(k_x, k_y, levels, harmonics, phi, L, mnrange)
+function plotBandEnergies(k_x, k_y, levels, harmonics, phi, L, m, zeeman_vector, valley_zeeman_vector, mnrange)
     projs = []
     for i in 1:length(harmonics)
         push!(projs,dotproduct(harmonics,compute_fourier_coefficients(i)))
@@ -166,7 +126,7 @@ function plotBandEnergies(k_x, k_y, levels, harmonics, phi, L, mnrange)
                 i = take!(channel)
 
                 B_num = i
-                B_den = 239
+                B_den = 197
 
 
                 evals = spectrum(k_x, k_y, levels, projs, phi, B_num, B_den, L)
@@ -292,3 +252,4 @@ end
 
 
 
+                239

@@ -59,10 +59,10 @@ Pre-computes the core form factor tensor S(n1,λ1; n2,λ2; q,G).
 The indices are (n1_out, λ1_out, n2_in, λ2_in, qx, qy, Gx, Gy).
 """
 function precomputeFormFactorTensorCore(indices, q_indices, G_indices, q_grid, G_vectors, L, l_B)
-    i_n, i_λ = indices
+    i_n = indices
     iqx, iqy = q_indices'
         iGx, iGy = G_indices'
-            S_core = ITensor(i_n, i_λ, i_n'', i_λ'',iqx,iqy,iGx,iGy)
+            S_core = ITensor(i_n, i_n'', iqx,iqy,iGx,iGy)
 
 
         qx_vals, qy_vals = q_grid
@@ -74,9 +74,22 @@ function precomputeFormFactorTensorCore(indices, q_indices, G_indices, q_grid, G
             G = [Gx_vals[Gx_idx], Gy_vals[Gy_idx]]
             q_total = q + K * G
 
-            for n1 in 1:dim(i_n), n2 in 1:dim(i_n), λ1 in 1:dim(i_λ), λ2 in 1:dim(i_λ)
+            for n1_idx in 1:dim(i_n), n2_idx in 1:dim(i_n)
+                n1 = n1_idx - div(dim(i_n) - 1,2) -1
+                λ1 =
+                (if (n1 < 0)
+                    -1
+                else
+                    1
+                end)
+                n2 = n2_idx - div(dim(i_n) - 1,2) -1
+                λ2 = (if (n2 < 0)
+                          -1
+                else
+                    1
+                end)
                 val = grapheneLandauFourierMatrixElement(q_total[1], q_total[2], n1 - 1, n2 - 1, l_B, (λ1 == 1 ? 1 : -1), (λ2 == 1 ? 1 : -1))
-                S_core[i_n(n1), i_λ(λ1), i_n''(n2), i_λ''(λ2), iqx(qx_idx), iqy(qy_idx), iGx(Gx_idx), iGy(Gy_idx)] = val
+                S_core[i_n(n1_idx), i_n''(n2_idx), iqx(qx_idx), iqy(qy_idx), iGx(Gx_idx), iGy(Gy_idx)] = val
             end
         end
         return S_core
@@ -86,10 +99,10 @@ end
 Pre-computes the S(-q) form factor tensor using S(-q)_ab = (-1)^(na-nb) * S(q)_ba.
 """
 function precomputeFormFactorSnegQ(indices, q_indices, G_indices, q_grid, G_vectors, L, l_B)
-    i_n, i_λ = indices
+    i_n = indices
     iqx, iqy = q_indices''
         iGx, iGy = G_indices
-    S_neg_q = ITensor(i_n', i_λ', i_n''', i_λ''', iqx,iqy,iGx,iGy)
+    S_neg_q = ITensor(i_n', i_n''', iqx,iqy,iGx,iGy)
 
 
     qx_vals, qy_vals = q_grid
@@ -101,12 +114,25 @@ function precomputeFormFactorSnegQ(indices, q_indices, G_indices, q_grid, G_vect
         G = [Gx_vals[Gx_idx], Gy_vals[Gy_idx]]
         q_total = q + K * G
 
-        for na in 1:dim(i_n), nb in 1:dim(i_n), λa in 1:dim(i_λ), λb in 1:dim(i_λ)
+        for na_idx in 1:dim(i_n), nb_idx in 1:dim(i_n)
+            na = na_idx - div(dim(i_n) - 1,2) -1
+            λa =
+            (if na < 0
+                -1
+            else
+                1
+            end)
+            nb = nb_idx - div(dim(i_n) - 1,2) -1
+            λb =  (if nb < 0
+            -1
+            else
+                1
+            end)
             # Calculate S(q)_ba
             val_S_ba = grapheneLandauFourierMatrixElement(-q_total[1], -q_total[2], nb - 1, na - 1, l_B, (λb == 1 ? 1 : -1), (λa == 1 ? 1 : -1))
             # S(-q)_ab = (-1)^(na-nb) * S(q)_ba
             final_val = val_S_ba
-            S_neg_q[i_n'(na), i_λ'(λa), i_n'''(nb), i_λ'''(λb), iqx(qx_idx), iqy(qy_idx), iGx(Gx_idx), iGy(Gy_idx)] = final_val
+            S_neg_q[i_n'(na_idx), i_n'''(nb_idx), iqx(qx_idx), iqy(qy_idx), iGx(Gx_idx), iGy(Gy_idx)] = final_val
         end
     end
     return S_neg_q
@@ -118,7 +144,7 @@ Pre-computes the combined phase factor for the Direct Term.
     function precomputeDirectPhaseTensor(orbital_indices, momentum_indices, q_indices, G_indices,
                                          q_grid, G_vectors, L, l_B, p_supercell, q_supercell, Ky)
         # Unpack indices
-        i_l = orbital_indices[5]
+        i_l = orbital_indices[4]
         ikx, iky = momentum_indices
         iqx, _ = q_indices
         iGx, iGy = G_indices
@@ -172,7 +198,7 @@ Pre-computes the combined phase factor for the Direct Term.
         function precomputeExchangePhaseTensor(orbital_indices, momentum_indices, q_indices, Q_val, G_indices,
                                                q_grid, G_vectors, L, l_B, p_supercell, q_supercell, Ky)
             # Unpack indices
-            i_l = orbital_indices[5]
+            i_l = orbital_indices[4]
             ikx, iky = momentum_indices
             iqx, iqy = q_indices'
                 iGx, iGy = G_indices'
@@ -269,7 +295,7 @@ return Phase_X
                                      Q_indices, orbital_indices, momentum_indices)
 
                 # Unpack indices
-                i_n, i_λ, i_s, i_K, i_l = orbital_indices
+                i_n, i_s, i_K, i_l = orbital_indices
                 ikx, iky = momentum_indices
                 iQx, iQy = Q_indices
 
@@ -280,10 +306,10 @@ return Phase_X
                 # Initialize output Hamiltonian tensor with zeros
 
                 # Define composite indices and new momentum indices once, as they are G-independent
-                Γ1 = (n=i_n,  λ=i_λ,  s=i_s,  K=i_K,  l=i_l)
-                Γ2 = (n=i_n',   λ=i_λ',   s=i_s',   K=i_K',   l=i_l')
-                Γ3 = (n=i_n'', λ=i_λ'', s=i_s'', K=i_K'', l=i_l'')
-                Γ4 = (n=i_n''',λ=i_λ''',s=i_s''',K=i_K''',l=i_l''')
+                Γ1 = (n=i_n, s=i_s,  K=i_K,  l=i_l)
+                Γ2 = (n=i_n', s=i_s',   K=i_K',   l=i_l')
+                Γ3 = (n=i_n'', s=i_s'', K=i_K'', l=i_l'')
+                Γ4 = (n=i_n''',s=i_s''',K=i_K''',l=i_l''')
                 ikx4 = prime(ikx)
                 iky4 = prime(iky)
 
@@ -331,7 +357,7 @@ return Phase_X
                 D = D*Deltas
                 D = setprime(D,0,ikx)
                 D = setprime(D,0,iky)
-                D = permute(D, i_n, i_λ, i_s, i_K, i_l, i_n'', i_λ'', i_s'', i_K'', i_l'', ikx, iky)
+                D = permute(D, i_n, i_s, i_K, i_l, i_n'', i_s'', i_K'', i_l'', ikx, iky)
                 #print(inds(D))
                 # The sum over the internal momentum k4 was handled by the tensor contraction.
                 return D
@@ -340,7 +366,7 @@ return Phase_X
             function naiveDirectTerm(Δ, V_full, S_core_full, S_neg_q_core_full, Phase_D_full,
                                      orbital_indices, momentum_indices, q_grid, G_vectors, Q_val,
                                      q_indices, G_indices)
-                i_n, i_λ, i_s, i_K, i_l = orbital_indices
+                i_n, i_s, i_K, i_l = orbital_indices
                 ikx, iky = momentum_indices
                 iqx, iqy = q_indices
                 iGx, iGy = G_indices
@@ -353,18 +379,18 @@ return Phase_X
                 Qy_val = ky_vals[Qy_idx]
 
                 # Dimensions
-                dims = (dim(i_n), dim(i_λ), dim(i_s), dim(i_K), dim(i_l),
-                        dim(i_n), dim(i_λ), dim(i_s), dim(i_K), dim(i_l),
+                dims = (dim(i_n), dim(i_s), dim(i_K), dim(i_l),
+                        dim(i_n), dim(i_s), dim(i_K), dim(i_l),
                         dim(ikx), dim(iky))
                 H_direct_naive = zeros(ComplexF64, dims)
 
-                for n1 in 1:dim(i_n), λ1 in 1:dim(i_λ), s1 in 1:dim(i_s), K1 in 1:dim(i_K), l1 in 1:dim(i_l),
-                    n3 in 1:dim(i_n), λ3 in 1:dim(i_λ), s3 in 1:dim(i_s), K3 in 1:dim(i_K), l3 in 1:dim(i_l),
+                for n1 in 1:dim(i_n), s1 in 1:dim(i_s), K1 in 1:dim(i_K), l1 in 1:dim(i_l),
+                    n3 in 1:dim(i_n), s3 in 1:dim(i_s), K3 in 1:dim(i_K), l3 in 1:dim(i_l),
                     kx3_idx in 1:dim(ikx), ky3_idx in 1:dim(iky)
 
                     for kx4_idx in 1:dim(ikx), ky4_idx in 1:dim(iky),
-                        n2 in 1:dim(i_n), λ2 in 1:dim(i_λ), s2 in 1:dim(i_s), K2 in 1:dim(i_K), l2 in 1:dim(i_l),
-                        n4 in 1:dim(i_n), λ4 in 1:dim(i_λ), s4 in 1:dim(i_s), K4 in 1:dim(i_K), l4 in 1:dim(i_l),
+                        n2 in 1:dim(i_n), s2 in 1:dim(i_s), K2 in 1:dim(i_K), l2 in 1:dim(i_l),
+                        n4 in 1:dim(i_n), s4 in 1:dim(i_s), K4 in 1:dim(i_K), l4 in 1:dim(i_l),
                         Gx_idx in 1:dim(iGx), Gy_idx in 1:dim(iGy)
 
                         # Kronecker deltas
@@ -373,15 +399,15 @@ return Phase_X
                         end
 
                         # Density matrix value
-                        Δ_val = Δ[i_n'(n4), i_λ'(λ4), i_s'(s4), i_K'(K4), i_l'(l4),
-                                  i_n(n2), i_λ(λ2), i_s(s2), i_K(K2), i_l(l2),
+                        Δ_val = Δ[i_n'(n4), i_s'(s4), i_K'(K4), i_l'(l4),
+                                  i_n(n2), i_s(s2), i_K(K2), i_l(l2),
                                   ikx'(kx4_idx), iky'(ky4_idx)]
 
                         # Potential and form factors
                         V_val = V_full[iqx'(Qx_idx), iqy'(Qy_idx), iGx(Gx_idx), iGy(Gy_idx)]
-                        S13_val = S_core_full[i_n(n1), i_λ(λ1), i_n''(n3), i_λ''(λ3),
+                        S13_val = S_core_full[i_n(n1), i_n''(n3),
                                               iqx'(Qx_idx), iqy'(Qy_idx), iGx'(Gx_idx), iGy'(Gy_idx)]
-                        S42_val = S_neg_q_core_full[i_n'(n4), i_λ'(λ4), i_n'''(n2), i_λ'''(λ2),
+                        S42_val = S_neg_q_core_full[i_n'(n4),  i_n'''(n2),
                                                     iqx''(Qx_idx), iqy''(Qy_idx), iGx(Gx_idx), iGy(Gy_idx)]
 
                         # Phase factor
@@ -391,7 +417,7 @@ return Phase_X
                                                  iqx(Qx_idx), iGx(Gx_idx), iGy(Gy_idx)]
 
                         term = Δ_val * V_val * S13_val * S42_val * phase_val
-                        H_direct_naive[n1, λ1, s1, K1, l1, n3, λ3, s3, K3, l3, kx3_idx, ky3_idx] += term
+                        H_direct_naive[n1, s1, K1, l1, n3, s3, K3, l3, kx3_idx, ky3_idx] += term
                     end
                 end
                 return H_direct_naive
@@ -401,7 +427,7 @@ return Phase_X
                                        Shift::ITensor, ikx_p::Index, iky_p::Index, orbital_indices, momentum_indices)
 
                 # Unpack indices
-                i_n, i_λ, i_s, i_K, i_l = orbital_indices
+                i_n, i_s, i_K, i_l = orbital_indices
                 ikx, iky = momentum_indices
                 iqx = findindex(Shift, "qx")
                 iqy = findindex(Shift, "qy")
@@ -412,10 +438,10 @@ return Phase_X
                 H_exchange = ITensor(ikx, iky, orbital_indices'..., orbital_indices...)
 
                 # --- Define composite indices for the 4 states in the interaction ---
-                Γ1 = (n=i_n,  λ=i_λ,  s=i_s,  K=i_K,  l=i_l)
-                Γ2 = (n=i_n',   λ=i_λ',   s=i_s',   K=i_K',   l=i_l')
-                Γ3 = (n=i_n'', λ=i_λ'', s=i_s'', K=i_K'', l=i_l'')
-                Γ4 = (n=i_n''',λ=i_λ''',s=i_s''',K=i_K''',l=i_l''')
+                Γ1 = (n=i_n, s=i_s,  K=i_K,  l=i_l)
+                Γ2 = (n=i_n', s=i_s',   K=i_K',   l=i_l')
+                Γ3 = (n=i_n'',  s=i_s'', K=i_K'', l=i_l'')
+                Γ4 = (n=i_n''',s=i_s''',K=i_K''',l=i_l''')
 
                 # --- Prepare Tensors with Correct Index Structure ---
                 Deltas = delta(Γ1.s, Γ4.s) * delta(Γ2.s, Γ3.s) * delta(Γ1.K, Γ4.K) * delta(Γ2.K, Γ3.K)
@@ -465,7 +491,7 @@ return Phase_X
                 H_X = noprime(E,tags=("ky"))
                 #print(inds(E))
 
-                H_X = permute(H_X, i_n, i_λ, i_s, i_K, i_l, i_n''', i_λ''', i_s''', i_K''', i_l''', ikx, iky)
+                H_X = permute(H_X, i_n, i_s, i_K, i_l, i_n''', i_s''', i_K''', i_l''', ikx, iky)
 
                 #print(inds(H_X))
                 # the final result is negated
@@ -475,7 +501,7 @@ return Phase_X
             function naiveExchangeTerm(Δ, V_full, S_core_full, S_neg_q_core_full, Phase_X_full,
                                        orbital_indices, momentum_indices, q_grid, G_vectors, Q_val,
                                        q_indices, G_indices, L, l_B, p_supercell, q_supercell, Ky)
-                i_n, i_λ, i_s, i_K, i_l = orbital_indices
+                i_n, i_s, i_K, i_l = orbital_indices
                 ikx, iky = momentum_indices
                 iqx, iqy = q_indices
                 iGx, iGy = G_indices
@@ -489,13 +515,13 @@ return Phase_X
                 K_sys = 2π / L
 
                 # Dimensions
-                dims = (dim(i_n), dim(i_λ), dim(i_s), dim(i_K), dim(i_l),
-                        dim(i_n), dim(i_λ), dim(i_s), dim(i_K), dim(i_l),
+                dims = (dim(i_n), dim(i_s), dim(i_K), dim(i_l),
+                        dim(i_n), dim(i_s), dim(i_K), dim(i_l),
                         dim(ikx), dim(iky))
                 H_exchange_naive = zeros(ComplexF64, dims)
 
-                for n1 in 1:dim(i_n), λ1 in 1:dim(i_λ), s1 in 1:dim(i_s), K1 in 1:dim(i_K), l1 in 1:dim(i_l),
-                    n4 in 1:dim(i_n), λ4 in 1:dim(i_λ), s4 in 1:dim(i_s), K4 in 1:dim(i_K), l4 in 1:dim(i_l),
+                for n1 in 1:dim(i_n), s1 in 1:dim(i_s), K1 in 1:dim(i_K), l1 in 1:dim(i_l),
+                    n4 in 1:dim(i_n), s4 in 1:dim(i_s), K4 in 1:dim(i_K), l4 in 1:dim(i_l),
                     kx4_idx in 1:dim(ikx), ky4_idx in 1:dim(iky)
 
                     # Kronecker deltas for external states
@@ -505,8 +531,8 @@ return Phase_X
 
                     for qx_idx in 1:dim(iqx), qy_idx in 1:dim(iqy),
                         Gx_idx in 1:dim(iGx), Gy_idx in 1:dim(iGy),
-                        n2 in 1:dim(i_n), λ2 in 1:dim(i_λ), s2 in 1:dim(i_s), K2 in 1:dim(i_K), l2 in 1:dim(i_l),
-                        n3 in 1:dim(i_n), λ3 in 1:dim(i_λ), s3 in 1:dim(i_s), K3 in 1:dim(i_K), l3 in 1:dim(i_l)
+                        n2 in 1:dim(i_n), s2 in 1:dim(i_s), K2 in 1:dim(i_K), l2 in 1:dim(i_l),
+                        n3 in 1:dim(i_n), s3 in 1:dim(i_s), K3 in 1:dim(i_K), l3 in 1:dim(i_l)
 
                         # Kronecker deltas for internal states
                         if !(s2 == s3 && K2 == K3)
@@ -526,15 +552,15 @@ return Phase_X
                         ky_prime_idx = argmin(abs.(ky_vals .- ky_prime))
 
                         # Density matrix value at shifted momentum
-                        Δ_val = Δ[i_n'(n3), i_λ'(λ3), i_s'(s3), i_K'(K3), i_l'(l3),
-                                  i_n(n2), i_λ(λ2), i_s(s2), i_K(K2), i_l(l2),
+                        Δ_val = Δ[i_n'(n3), i_s'(s3), i_K'(K3), i_l'(l3),
+                                  i_n(n2), i_s(s2), i_K(K2), i_l(l2),
                                   ikx'(kx_prime_idx), iky'(ky_prime_idx)]
 
                         # Potential and form factors
                         V_val = V_full[iqx'(qx_idx), iqy'(qy_idx), iGx(Gx_idx), iGy(Gy_idx)]
-                        S13_val = S_core_full[i_n(n1), i_λ(λ1), i_n''(n3), i_λ''(λ3),
+                        S13_val = S_core_full[i_n(n1),  i_n''(n3),
                                               iqx'(qx_idx), iqy'(qy_idx), iGx'(Gx_idx), iGy'(Gy_idx)]
-                        S42_val = S_neg_q_core_full[i_n'(n4), i_λ'(λ4), i_n'''(n2), i_λ'''(λ2),
+                        S42_val = S_neg_q_core_full[i_n'(n4), i_n'''(n2),
                                                     iqx''(qx_idx), iqy''(qy_idx), iGx(Gx_idx), iGy(Gy_idx)]
 
                         # Phase factor
@@ -545,7 +571,7 @@ return Phase_X
                                                  iqx'(qx_idx), iqy'(qy_idx), iGx'(Gx_idx), iGy'(Gy_idx)]
 
                         term = -Δ_val * V_val * S13_val * S42_val * phase_val
-                        H_exchange_naive[n1, λ1, s1, K1, l1, n4, λ4, s4, K4, l4, kx4_idx, ky4_idx] += term
+                        H_exchange_naive[n1,  s1, K1, l1, n4, s4, K4, l4, kx4_idx, ky4_idx] += term
                     end
                 end
                 return H_exchange_naive
@@ -577,12 +603,12 @@ return Phase_X
                 Ky = 2π/L
 
                 # --- 2. Define indices ---
-                i_n = Index(N_n, "n")
-                i_λ = Index(N_λ, "λ")
+                i_n = Index(2*N_n+1, "n")
+                #i_λ = Index(N_λ, "λ")
                 i_s = Index(N_s, "s")
                 i_K = Index(N_K, "K")
                 i_l = Index(N_l, "l")
-                orbital_indices = (i_n, i_λ, i_s, i_K, i_l)
+                orbital_indices = (i_n, i_s, i_K, i_l)
 
                 ikx = Index(N_kx, "kx")
                 iky = Index(N_ky, "ky")
@@ -618,8 +644,8 @@ return Phase_X
                 # --- 4. Pre-compute tensors ---
                 println("\n--- Pre-computation Step ---")
                 V_full = precomputePotentialTensor(q_indices, G_indices, q_grid, G_vectors, tanh, ε, L)
-                S_core_full = precomputeFormFactorTensorCore((i_n, i_λ), q_indices, G_indices, q_grid, G_vectors, L, l_B)
-                S_neg_q_core_full = precomputeFormFactorSnegQ((i_n, i_λ), q_indices, G_indices, q_grid, G_vectors, L, l_B)
+                S_core_full = precomputeFormFactorTensorCore((i_n), q_indices, G_indices, q_grid, G_vectors, L, l_B)
+                S_neg_q_core_full = precomputeFormFactorSnegQ((i_n), q_indices, G_indices, q_grid, G_vectors, L, l_B)
 
                 Phase_D_full = precomputeDirectPhaseTensor(orbital_indices, momentum_indices, q_indices, G_indices, q_grid, G_vectors, L, l_B, p_supercell, q_supercell, Ky)
                 Phase_X_full = precomputeExchangePhaseTensor(orbital_indices, momentum_indices, q_indices, Q_val, G_indices, q_grid, G_vectors, L, l_B, p_supercell, q_supercell, Ky)
@@ -630,11 +656,11 @@ return Phase_X
                 println("\n--- Building Dummy Density Matrix Δ ---")
                 Δ = ITensor(orbital_indices'..., orbital_indices..., ikx', iky')
                 for idx_k_x in 1:N_kx, idx_k_y in 1:N_ky
-                    for idx_n in 1:N_n, idx_λ in 1:N_λ, idx_s in 1:N_s, idx_K in 1:N_K, idx_l in 1:N_l
+                    for idx_n in 1:(2*N_n+1), idx_s in 1:N_s, idx_K in 1:N_K, idx_l in 1:N_l
                         # Let's say only the lowest LL is occupied
                         if idx_n == 1
-                            Δ[i_n'(idx_n), i_λ'(idx_λ), i_s'(idx_s), i_K'(idx_K), i_l'(idx_l),
-                              i_n(idx_n), i_λ(idx_λ), i_s(idx_s), i_K(idx_K), i_l(idx_l),
+                            Δ[i_n'(idx_n),i_s'(idx_s), i_K'(idx_K), i_l'(idx_l),
+                              i_n(idx_n), i_s(idx_s), i_K(idx_K), i_l(idx_l),
                               ikx'(idx_k_x), iky'(idx_k_y)] = 1.0
                         end
                     end
@@ -662,8 +688,8 @@ return Phase_X
 
                 println("\n--- Comparing Results ---")
                 # Convert tensor network results to arrays
-                H_direct_arr = permutedims(array(H_direct), [1,2,3,4,5, 6,7,8,9,10, 11,12])
-                H_exchange_arr = permutedims(array(H_exchange), [1,2,3,4,5, 6,7,8,9,10, 11,12])
+                H_direct_arr = permutedims(array(H_direct), [1,2,3,4,5, 6,7,8,9,10])
+                H_exchange_arr = permutedims(array(H_exchange), [1,2,3,4,5, 6,7,8,9,10])
 
                 # Calculate differences
                 diff_direct = norm(H_direct_arr - H_direct_naive)
