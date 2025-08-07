@@ -53,8 +53,15 @@ function laguerre_poly(superscript, subscript, z)
     return float(value)
 end
 
-function laguerreTilde(n,m,x)
-    return sqrt(factorial(n)/factorial(n+m)*x^m *exp(-x))*laguerre_poly(m,n,x)
+function laguerrePart(n,m,l_B,qx,qy)
+    cPlus = im*l_B*(qx - im*qy)/sqrt(2)
+    cMinus = im*l_B*(qx + im*qy)/sqrt(2)
+    if n >= m
+        return exp(0.5*cPlus*cMinus)*sqrt(factorial(m)/factorial(n))*(cPlus)^(n-m)*laguerre_poly(n-m,m,(-cPlus*cMinus))
+    else
+        return exp(0.5*cPlus*cMinus)*sqrt(factorial(n)/factorial(m))*(cMinus)^(m-n)*laguerre_poly(m-n,n,(-cPlus*cMinus))
+    end
+
 end
 
 function integrateBesselFunctionFrom0ToA(nu,a,cutoff=10)

@@ -18,9 +18,7 @@ include("Utilities.jl")
 include("LandauLevels.jl")
 include("matrixElements.jl")
 
-
 export Hamiltonian
-
 
 function Hamiltonian(k_x, k_y, levels, harmonics, phi, p, q, L, zeeman_vector, valley_zeeman_vector, m)
     g = gcd(p, q)
@@ -29,17 +27,30 @@ function Hamiltonian(k_x, k_y, levels, harmonics, phi, p, q, L, zeeman_vector, v
     hamiltonian = zeros(ComplexF64, matrix_size, matrix_size)
     B = (p_eff / q_eff) / L^2
 
+    # Precompute all G-vectors from equivalence classes
+    all_gvectors = Tuple{Float64, Int, Int}[]
+    for (coeff, (gx, gy)) in harmonics
+        # Generate C4 symmetric vectors
+        push!(all_gvectors, (coeff, gx, gy))
+        push!(all_gvectors, (coeff, -gy, gx))
+        push!(all_gvectors, (coeff, -gx, -gy))
+        push!(all_gvectors, (coeff, gy, -gx))
+    end
+
     for i in 1:matrix_size
         valley1, l1, spin1, n1, S1 = decompose_index_valleyful(i, p_eff, levels)
-        lambda1 = (n1 == 0) ? 0 : S1 # Sublattice component for wavefunction
+        lambda1 = (n1 == 0) ? 0 : S1
 
         for j in 1:matrix_size
             valley2, l2, spin2, n2, S2 = decompose_index_valleyful(j, p_eff, levels)
             lambda2 = (n2 == 0) ? 0 : S2
 
-            # 1. External Potential Term (from C4 harmonics)
-            potential_term = matrixElement(k_x, k_y, n1, n2, l1, l2, lambda1, lambda2, spin1, spin2, valley1, valley2, L, p_eff, q_eff, harmonics)
-            hamiltonian[i, j] += potential_term
+            # 1. External Potential Term
+            if valley1 == valley2 && spin1 == spin2
+                potential_term = matrixElement(k_x, k_y, n1, n2, l1, l2, lambda1, lambda2,
+                                               spin1, spin2, valley1, valley2, L, p_eff, q_eff, all_gvectors)
+                hamiltonian[i, j] += potential_term
+            end
 
             # 2. On-site terms (diagonal in all quantum numbers)
             if i == j
@@ -88,58 +99,56 @@ end
     end
 
 
-function spectrum(k_x, k_y, levels, projs, phi, p, q, L)239
-    hamiltonian = Hamiltonian(k_x, k_y, levels,projs, phi, p, q, L)
-    return eigvals(hamiltonian)
-end
-
-#plots energy as a function of magnetic field at a given point in momentum space
-function plotBandEnergies(k_x, k_y, levels, harmonics, phi, L, m, zeeman_vector, valley_zeeman_vector, mnrange)
-    projs = []
-    for i in 1:length(harmonics)
-        push!(projs,dotproduct(harmonics,compute_fourier_coefficients(i)))
+    function spectrum(k_x, k_y, levels, harmonics, phi, p, q, L, zeeman_vector, valley_zeeman_vector, m)
+        hamiltonian = Hamiltonian(k_x, k_y, levels, harmonics, phi, p, q, L, zeeman_vector, valley_zeeman_vector, m)
+        return eigvals(hamiltonian)
     end
 
-    num_points = 239
-    x = range(0, 1, length=num_points)
+
+#plots energy as a function of magnetic field at a given point in momentum space
+function plotBandEnergies(k_x, k_y, levels, harmonics, phi, L, m, zeeman_vector, valley_zeeman_vector)
+    num_points = 89
+    flux_ratios = Vector{Float64}(undef, num_points)
     ys = Vector{Vector{Float64}}(undef, num_points)
 
-
-    progress = Progress(num_points, barglyphs=BarGlyphs('|','█', '▁', '|', ' '),output=stderr, showspeed=true)
+    progress = Progress(num_points, barglyphs=BarGlyphs('|','█', '▁', '|', ' '),
+                        output=stderr, showspeed=true)
     lock_obj = ReentrantLock()
-
 
     @sync begin
         channel = Channel{Int}(num_points)
 
-    @async begin
-        for i in 1:num_points
-            put!(channel, i)
-        end
-        close(channel)
-    end
-
-    for _ in 1:Threads.nthreads()
         @async begin
-            while true
-                try
-                i = take!(channel)
+            for i in 1:num_points
+                put!(channel, i)
+            end
+            close(channel)
+        end
 
-                B_num = i
-                B_den = 197
+        for _ in 1:Threads.nthreads()
+            @async begin
+                while true
+                    try
+                        i = take!(channel)
+                        B_num = i
+                        B_den = 13
+                        flux_ratio = B_num / B_den  # Actual flux ratio
+                        flux_ratios[i] = flux_ratio
 
+                        evals = spectrum(k_x, k_y, levels, harmonics, phi, B_num, B_den, L,
+                                         zeeman_vector, valley_zeeman_vector, m)
+                        ys[i] = evals
+                        GC.gc()
 
-                evals = spectrum(k_x, k_y, levels, projs, phi, B_num, B_den, L)
-                ys[i] = evals
-                GC.gc()
-
-
-                lock(lock_obj) do
-                next!(progress; showvalues=[(:Current_B, "$B_num/$B_den")])
-                end
-                catch e
-                isa(e, InvalidStateException) && break
-                rethrow(e)
+                        lock(lock_obj) do
+                            next!(progress; showvalues=[
+                                (:Flux_Ratio, string(flux_ratio)),
+                                (:B_field, "$B_num/$B_den")
+                                ])
+                        end
+                        catch e
+                        isa(e, InvalidStateException) && break
+                        rethrow(e)
                     end
                 end
             end
@@ -148,17 +157,16 @@ function plotBandEnergies(k_x, k_y, levels, harmonics, phi, L, m, zeeman_vector,
 
     figure(figsize=(12, 8))
 
-
+    # Plot with actual flux ratios
     for i in 1:num_points
         if !isempty(ys[i])
-
-            scatter([x[i] for _ in 1:length(ys[i])], ys[i],
-            s=0.5, c="blue", alpha=0.5)
+            scatter(fill(flux_ratios[i], length(ys[i])), ys[i],
+                    s=0.5, c="blue", alpha=0.5)
         end
     end
 
-    # Adjust plot appearance
-    xlabel("Magnetic Flux (ϕ/ϕ₀)")
+    # Adjust plot appearance with proper labels
+    xlabel("Magnetic Flux Ratio (p/q)")
     ylabel("Energy")
     title("Hofstadter Butterfly - Energy Spectrum")
     grid(true, alpha=0.3)

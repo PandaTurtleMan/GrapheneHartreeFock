@@ -162,15 +162,15 @@ function compute_and_print_order_parameters(Δ::AbstractMatrix, levels::Int, p::
     println("\n--- Hartree-Fock Order Parameters ---")
     println("Normalization Factor (1/nF): $norm")
     println("\nSpin Polarization:")
-    @printf "  - Ferromagnetic (FM):   Sx=%.4f, Sy=%.4f, Sz=%.4f\n" real(norm*ops["FM_Sx"]) real(norm*ops["FM_Sy"]) real(0.5*norm*ops["FM_Sz"])
-    @printf "  - Antiferro (AFM):      Sx=%.4f, Sy=%.4f, Sz=%.4f\n" real(norm*ops["AFM_Sx"]) real(norm*ops["AFM_Sy"]) real(0.5*norm*ops["AFM_Sz"])
+    println("  - Ferromagnetic (FM):   Sx=%.4f, Sy=%.4f, Sz=%.4f\n", real(norm*ops["FM_Sx"]), real(norm*ops["FM_Sy"]), real(0.5*norm*ops["FM_Sz"]))
+    println( "  - Antiferro (AFM):      Sx=%.4f, Sy=%.4f, Sz=%.4f\n", real(norm*ops["AFM_Sx"]), real(norm*ops["AFM_Sy"]), real(0.5*norm*ops["AFM_Sz"]))
 
     println("\nValley Polarization:")
-    @printf "  - Valley-FM (VFM):      Tx=%.4f, Ty=%.4f, Tz=%.4f\n" real(norm*ops["VFM_Tx"]) real(norm*ops["VFM_Ty"]) real(0.5*norm*ops["VFM_Tz"])
-    @printf "  - Valley-AFM (VAFM):    Tx=%.4f, Ty=%.4f, Tz=%.4f\n" real(norm*ops["VAFM_Tx"]) real(norm*ops["VAFM_Ty"]) real(0.5*norm*ops["VAFM_Tz"])
+    println("  - Valley-FM (VFM):      Tx=%.4f, Ty=%.4f, Tz=%.4f\n", real(norm*ops["VFM_Tx"]), real(norm*ops["VFM_Ty"]), real(0.5*norm*ops["VFM_Tz"]))
+    println("  - Valley-AFM (VAFM):    Tx=%.4f, Ty=%.4f, Tz=%.4f\n", real(norm*ops["VAFM_Tx"]), real(norm*ops["VAFM_Ty"]), real(0.5*norm*ops["VAFM_Tz"]))
 
     println("\nSublattice Polarization:")
-    @printf "  - <Σ_z>: %.4f\n" real(norm*ops["Sublattice_Pol"])
+    println( "  - <Σ_z>: %.4f\n", real(norm*ops["Sublattice_Pol"]))
     println("-------------------------------------\n")
 end
 

@@ -83,7 +83,8 @@ function precomputeFormFactorTensorCore(indices, q_indices, G_indices, q_grid, G
                     1
                 end)
                 n2 = n2_idx - div(dim(i_n) - 1,2) -1
-                λ2 = (if (n2 < 0)
+                λ2 =
+                (if (n2 < 0)
                           -1
                 else
                     1
