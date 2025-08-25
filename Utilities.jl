@@ -407,3 +407,59 @@ end
                                         )
                                 end
 
+                                function random_hermitian_density_matrix(N::Int, nF::Int; seed::Union{Int, Nothing}=nothing)
+                                    """
+                                    Generates a random Hermitian density matrix of size N×N with trace nF.
+
+                                    Parameters:
+                                    - N: Size of the matrix (N×N)
+                                    - nF: Desired trace of the matrix
+                                    - seed: Optional random seed for reproducibility
+
+                                        Returns:
+                                        - Δ: A Hermitian matrix with trace nF
+                                        """
+
+                                        # Set random seed if provided
+                                        if seed !== nothing
+                                            Random.seed!(seed)
+                                        end
+
+                                        # Input validation
+                                        if N <= 0
+                                            throw(ArgumentError("Matrix dimension N must be positive."))
+                                        end
+                                        if nF < 0
+                                            throw(ArgumentError("Trace must be non-negative."))
+                                        end
+                                        if nF > N
+                                            throw(ArgumentError("Trace cannot exceed matrix dimension N."))
+                                        end
+
+                                        # Method 1: Generate a random unitary matrix and create a projector
+                                        # This ensures the matrix is idempotent (Δ² = Δ) which is a property of density matrices
+
+                                        # Generate a random complex matrix
+                                        A = randn(ComplexF64, N, N)
+
+                                        # Make it Hermitian (A + A† is always Hermitian)
+                                        H_rand = A + A'
+
+# Diagonalize to get a random unitary matrix
+F = eigen(Hermitian(H_rand))
+U = F.vectors
+
+# Create eigenvalues: nF ones and (N-nF) zeros
+eigs = zeros(Float64, N)
+eigs[1:nF] .= 1.0
+
+# Randomly shuffle the eigenvalues
+shuffle!(eigs)
+
+# Construct the density matrix
+Δ = U * Diagonal(eigs) * U'
+
+# Ensure the output is explicitly Hermitian
+return Hermitian(Δ)
+                                    end
+
