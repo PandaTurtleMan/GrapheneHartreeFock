@@ -2,6 +2,8 @@ import QuadGK
 import Kronecker
 import LinearAlgebra
 import AngleBetweenVectors
+using ITensors
+
 include("Utilities.jl")
 
 function screening_fn(q_norm)

@@ -578,6 +578,189 @@ return Phase_X
                 return H_exchange_naive
             end
 
+        function partial_trace(rho::ITensor, inds_to_trace::Vector{<:Index})
+            # Start with the original tensor. We will contract it with a series of delta tensors.
+            traced_rho = rho
+
+            # Iterate over each site index that we want to trace out.
+            for i in inds_to_trace
+                # Find the primed version of the index.
+                ip = prime(i)
+
+                # Check if both the unprimed and primed indices exist on the tensor.
+                # This is a sanity check to ensure the operation is valid.
+                if !hasinds(traced_rho, i, ip)
+                    error("Input ITensor must have both the index $i and its primed version $ip to trace over.")
+                end
+
+                # Contract with a delta tensor. This effectively sums over the diagonal
+                # elements for the subsystem defined by index `i`, which is the definition of a trace.
+                traced_rho *= delta(i, ip)
+            end
+
+            return traced_rho
+        end
+
+        function lambdaTensor(p, q, L, kGrid, reciVectorGrid, n_levels, l_levels)
+            # Extract grid values
+            kx_vals, ky_vals = kGrid
+            Gx_vals, Gy_vals = reciVectorGrid
+
+            # Create indices
+            ikx = Index(length(kx_vals), "kx")
+            iky = Index(length(ky_vals), "ky")
+            iGx = Index(length(Gx_vals), "Gx")
+            iGy = Index(length(Gy_vals), "Gy")
+            i_n = Index(n_levels, "n")
+            i_n′ = Index(n_levels, "n′")
+            i_l = Index(l_levels, "l")
+            i_l′ = Index(l_levels, "l′")
+            i_λ = Index(2, "λ")  # sublattice index (values: 1 → +1, 2 → -1)
+            i_λ′ = Index(2, "λ′")
+            i_s = Index(2, "s")  # spin index
+            i_s′ = Index(2, "s′")
+            i_K = Index(2, "K")  # valley index
+            i_K′ = Index(2, "K′")
+
+            # Create core tensor without spin/valley indices
+            Λ_core = ITensor(ikx, iky, iGx, iGy, i_n, i_n′, i_l, i_l′, i_λ, i_λ′)
+            Λ_neg_core = ITensor(ikx, iky, iGx, iGy, i_n, i_n′, i_l, i_l′, i_λ, i_λ′)
+
+            # Precompute constants
+            K = 2π / L
+            l_B = sqrt(q/p) * L
+
+            @showprogress "Computing lambda tensor..." for ikx_idx in 1:dim(ikx), iky_idx in 1:dim(iky),
+                iGx_idx in 1:dim(iGx), iGy_idx in 1:dim(iGy),
+                i_n_idx in 1:dim(i_n), i_n′_idx in 1:dim(i_n′),
+                i_l_idx in 1:dim(i_l), i_l′_idx in 1:dim(i_l′),
+                i_λ_idx in 1:dim(i_λ), i_λ′_idx in 1:dim(i_λ′)
+
+                # Get actual values from indices
+                k_x = kx_vals[ikx_idx]
+                k_y = ky_vals[iky_idx]
+                G_x = Gx_vals[iGx_idx]
+                G_y = Gy_vals[iGy_idx]
+                n1 = i_n_idx - 1  # Convert to 0-based index
+                n2 = i_n′_idx - 1
+                l1 = i_l_idx
+                l2 = i_l′_idx
+                λ1 = i_λ_idx == 1 ? 1 : -1
+                λ2 = i_λ′_idx == 1 ? 1 : -1
+
+                # Compute matrix elements for both G and -G
+                element = fourierMatrixElement(k_x, k_y, n1, n2, l1, l2, λ1, λ2,
+                                               1, 1, 1, 1, L, p, q, G_x, G_y)
+                element_neg = fourierMatrixElement(k_x, k_y, n1, n2, l1, l2, λ1, λ2,
+                                                   1, 1, 1, 1, L, p, q, -G_x, -G_y)
+
+                Λ_core[ikx(ikx_idx), iky(iky_idx), iGx(iGx_idx), iGy(iGy_idx),
+                       i_n(i_n_idx), i_n′(i_n′_idx), i_l(i_l_idx), i_l′(i_l′_idx),
+                       i_λ(i_λ_idx), i_λ′(i_λ′_idx)] = element
+                Λ_neg_core[ikx(ikx_idx), iky(iky_idx), iGx(iGx_idx), iGy(iGy_idx),
+                           i_n(i_n_idx), i_n′(i_n′_idx), i_l(i_l_idx), i_l′(i_l′_idx),
+                           i_λ(i_λ_idx), i_λ′(i_λ′_idx)] = element_neg
+            end
+
+            # Extend to spin and valley indices using delta tensors
+            δ_s = delta(i_s, i_s′)
+            δ_K = delta(i_K, i_K′)
+
+            Λ_full = Λ_core * δ_s * δ_K
+            Λ_neg_full = Λ_neg_core * δ_s * δ_K
+
+            return Λ_full, Λ_neg_full, (ikx, iky, iGx, iGy, i_n, i_n′, i_l, i_l′, i_λ, i_λ′, i_s, i_s′, i_K, i_K′)
+        end
+
+        function ionicCorrectionTensor(Λ, Λ_neg, V, q_indices, kGrid)
+            # Extract indices
+            iGx = commonind(Λ, V)
+            iGy = commonind(Λ, V)
+            ikx = commonind(Λ, Λ_neg)
+            iky = commonind(Λ, Λ_neg)
+            iqx, iqy = q_indices
+
+            # Get grid size for normalization
+            n_kpoints = dim(ikx) * dim(iky)
+
+            # Find the middle index for q=0 (assuming odd-sized grids centered at 0)
+            qx_mid_idx = div(dim(iqx), 2) + 1
+            qy_mid_idx = div(dim(iqy), 2) + 1
+
+            # Set q=0 in potential tensor
+            V0 = V * setelt(iqx(qx_mid_idx)) * setelt(iqy(qy_mid_idx))
+
+            # Prime G indices for pointwise multiplication
+            V0_primed = prime(V0, (iGx, iGy))
+            Λ_primed = prime(Λ, (iGx, iGy))
+            Λ_neg_primed = prime(Λ_neg, (iGx, iGy))
+
+            # Create delta tensor for G indices
+            δ_G = delta(iGx, iGx'', iGx''') * delta(iGy, iGy'', iGy''')
+
+            # Pointwise multiplication with V tensor
+            VΛ = V0_primed * δ_G * Λ_primed
+            VΛ_neg = V0_primed * δ_G * Λ_neg_primed
+
+            # Unprime G indices
+            VΛ = unprime(VΛ, (iGx, iGy))
+            VΛ_neg = unprime(VΛ_neg, (iGx, iGy))
+
+            # Create a tensor of ones for momentum summation
+            ones_k = ITensor(ikx, iky)
+            for i in 1:dim(ikx), j in 1:dim(iky)
+                ones_k[ikx(i), iky(j)] = 1.0
+            end
+
+            # Sum over momentum indices by contracting with ones tensor
+            VΛ_sum = VΛ * ones_k
+            VΛ_neg_sum = VΛ_neg * ones_k
+
+            # Partial trace over orbital indices only (excluding momentum)
+            orbital_indices = [i_n, i_n′, i_l, i_l′, i_λ, i_λ′, i_s, i_s′, i_K, i_K′]
+            traced_Λ = partial_trace(Λ, orbital_indices) / n_kpoints
+            traced_Λ_neg = partial_trace(Λ_neg, orbital_indices) / n_kpoints
+
+            # Contract with traced tensors
+            I1 = VΛ_sum * traced_Λ_neg
+            I2 = VΛ_neg_sum * traced_Λ
+
+            # Return the sum
+            return 0.5 * (I1 + I2)
+        end
+
+
+        function build_noninteracting_hamiltonian_tensor(levels, p, q, L, orbital_indices, momentum_indices, k_grid_vals_x, k_grid_vals_y)
+            i_n, i_s, i_K, i_l = orbital_indices
+            ikx, iky = momentum_indices
+
+            H0_total = ITensor(orbital_indices..., orbital_indices'..., ikx, iky)
+
+            for kx_idx in 1:length(k_grid_vals_x), ky_idx in 1:length(k_grid_vals_y)
+                kx_val = k_grid_vals_x[kx_idx]
+                ky_val = k_grid_vals_y[ky_idx]
+
+                H0_k = Hamiltonian(kx_val, ky_val, levels, [1.0], 0.0, p, q, L, [0,0,0], [0,0,0], 0.0)
+                H0_mat = Matrix(H0_k)
+
+                # Set the values for this k-point
+                for orb1 in 1:dim(i_n)*dim(i_s)*dim(i_K)*dim(i_l),
+                    orb2 in 1:dim(i_n)*dim(i_s)*dim(i_K)*dim(i_l)
+
+                    # Convert flat indices to multi-indices
+                    idx1 = ind2sub((dim(i_n), dim(i_s), dim(i_K), dim(i_l)), orb1)
+                    idx2 = ind2sub((dim(i_n), dim(i_s), dim(i_K), dim(i_l)), orb2)
+
+                    H0_total[i_n(idx1[1]), i_s(idx1[2]), i_K(idx1[3]), i_l(idx1[4]),
+                             i_n'(idx2[1]), i_s'(idx2[2]), i_K'(idx2[3]), i_l'(idx2[4]),
+                             ikx(kx_idx), iky(ky_idx)] = H0_mat[orb1, orb2]
+                end
+            end
+
+            return H0_total
+        end
+
+
 
             #------------------------------------------------------------------------------
             # VERIFICATION AND TESTING
@@ -624,7 +807,7 @@ return Phase_X
                 G_indices = (iGx, iGy)
 
                 # Fixed momentum transfer for direct term and shift for exchange term
-                Q_val = (1,1) # Corresponds to the first element of the k-grid
+                Q_val = (1,1) # Corresponds to the first element of the k-grid, bottom left corner
                 iQx = iqx(Q_val[1])
                 iQy = iqy(Q_val[2])
                 Q_indices = (iQx, iQy)
