@@ -45,14 +45,14 @@ function Hamiltonian(k_x, k_y, levels, harmonics, phi, p, q, L, zeeman_vector, v
             valley2, l2, spin2, n2, S2 = decompose_index_valleyful(j, p_eff, levels)
             lambda2 = (n2 == 0) ? 0 : S2
 
-            # 1. External Potential Term
+            # external Potential Term
             if valley1 == valley2 && spin1 == spin2
                 potential_term = matrixElement(k_x, k_y, n1, n2, l1, l2, lambda1, lambda2,
                                                spin1, spin2, valley1, valley2, L, p_eff, q_eff, all_gvectors)
                 hamiltonian[i, j] += potential_term
             end
 
-            # 2. On-site terms (diagonal in all quantum numbers)
+            # on-site terms (diagonal in alld quantum numbers)
             if i == j
                 # Kinetic Energy (Landau Levels)
                 hamiltonian[i, j] += evaluateLandauLevelMatrixElement(n1, B, lambda1, m)

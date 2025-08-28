@@ -125,7 +125,7 @@ end
 function run_hartree_fock_tensor(filename::String, initial_density_matrices::Vector{Tuple{String, ITensor}},
                                  levels::Int, p::Int, q::Int, L::Float64, nF::Int, ε::Float64,
                                  harmonicRange::Int, kxRadius::Int, kyRadius::Int,
-                                 screening_fn::Function, Q_val::Tuple{Int, Int})
+                                 screening_fn::Function, Q_val::Tuple{Int, Int},harmonics)
     # Grid parameters
     N_kx, N_ky = 2*kxRadius, 2*kxRadius
     N_G = 2*harmonicRange + 1
@@ -161,7 +161,7 @@ function run_hartree_fock_tensor(filename::String, initial_density_matrices::Vec
             G_vectors = (G_grid_vals, G_grid_vals)
             l_B = sqrt(q/p) * L
 
-            # Precompute tensors
+            # Precompute tensors (these will be kept in memory)
             println("Precomputing potential tensor...")
             V_full = precomputePotentialTensor(q_indices, G_indices, q_grid, G_vectors, screening_fn, ε, L)
 
@@ -180,7 +180,7 @@ function run_hartree_fock_tensor(filename::String, initial_density_matrices::Vec
 
             # Build non-interacting Hamiltonian at all k-points using helper function
             println("Building non-interacting Hamiltonian at all k-points...")
-            H0_total = build_noninteracting_hamiltonian_tensor(levels, p, q, L, orbital_indices, momentum_indices, k_grid_vals_x, k_grid_vals_y)
+            H0_total = build_noninteracting_hamiltonian_tensor(harmonics,levels, p, q, L, orbital_indices, momentum_indices, k_grid_vals_x, k_grid_vals_y)
 
             # Ionic correction
             println("Computing ionic correction...")
@@ -204,47 +204,62 @@ function run_hartree_fock_tensor(filename::String, initial_density_matrices::Vec
                 println("Processing initial density matrix: $name")
 
                 energy_prev = Inf
+                diis_error_history = ITensor[]
+                diis_delta_history = ITensor[]
+                max_diis_history = 6  # Maximum number of iterations to keep in DIIS history
 
                 # Main HF loop
                 for iter in 1:max_iter
                     println("Iteration $iter")
 
-                    # Initialize HF Hamiltonian
-                    H_hf_total = ITensor(orbital_indices..., orbital_indices'..., ikx, iky)
+                    # Compute direct term for entire grid
+                    H_direct_total = buildDirectTerm(Δ_total, V_full, S_core_full, S_neg_q_core_full,
+                                                     Phase_D_full, Q_val, orbital_indices, momentum_indices)
+                    H_direct_total ./= (n_kpoints * n_gvectors)
 
-                    # For each k-point, compute HF terms
+                    # Compute exchange term for entire grid
+                    H_exchange_total = buildExchangeTerm(Δ_total, V_full, S_core_full, S_neg_q_core_full,
+                                                         Phase_X_full, Shift, ikx_p, iky_p, orbital_indices, momentum_indices)
+                    H_exchange_total ./= (n_kpoints * n_gvectors)
+
+                    # Total HF Hamiltonian
+                    H_hf_total = H0_total + H_direct_total - H_exchange_total
+
+                    # Store the current density matrix for DIIS
+                    Δ_old = copy(Δ_total)
+
+                    # Diagonalize at each k-point and update density matrix
                     for kx_idx in 1:N_kx, ky_idx in 1:N_ky
-                        # Extract density matrix for this k-point
-                        Δ_slice = Δ_total * setelt(ikx(kx_idx)) * setelt(iky(ky_idx))
+                        # Extract HF Hamiltonian for this k-point
+                        H_hf_slice = H_hf_total * setelt(ikx(kx_idx)) * setelt(iky(ky_idx))
+                        H_hf_mat = matrix(H_hf_slice, orbital_indices..., orbital_indices'...)
 
-                        # Compute direct term
-                        H_direct = buildDirectTerm(Δ_slice, V_full, S_core_full, S_neg_q_core_full,
-                                                   Phase_D_full, Q_val, orbital_indices, momentum_indices)
-                        H_direct ./= (n_kpoints * n_gvectors)
+                        # Diagonalize
+                        F = eigen(Hermitian(H_hf_mat))
+                        U = F.vectors
 
-                        # Compute exchange term
-                        H_exchange = buildExchangeTerm(Δ_slice, V_full, S_core_full, S_neg_q_core_full,
-                                                       Phase_X_full, Shift, ikx_p, iky_p, orbital_indices, momentum_indices)
-                        H_exchange ./= (n_kpoints * n_gvectors)
+                        # Update density matrix for this k-point
+                        Δ_new = U[:, 1:nF] * U[:, 1:nF]'
 
-                        # Extract H0 for this k-point
-                        H0_slice = H0_total * setelt(ikx(kx_idx)) * setelt(iky(ky_idx))
-
-                        # Total HF Hamiltonian for this k-point
-                        H_hf_k = H0_slice + H_direct - H_exchange
-
-                        # Store in total HF Hamiltonian
+                        # Store in total density matrix
                         for orb1 in 1:dim(i_n)*dim(i_s)*dim(i_K)*dim(i_l),
                             orb2 in 1:dim(i_n)*dim(i_s)*dim(i_K)*dim(i_l)
 
                             idx1 = ind2sub((dim(i_n), dim(i_s), dim(i_K), dim(i_l)), orb1)
                             idx2 = ind2sub((dim(i_n), dim(i_s), dim(i_K), dim(i_l)), orb2)
 
-                            H_hf_total[i_n(idx1[1]), i_s(idx1[2]), i_K(idx1[3]), i_l(idx1[4]),
-                                       i_n'(idx2[1]), i_s'(idx2[2]), i_K'(idx2[3]), i_l'(idx2[4]),
-                                       ikx(kx_idx), iky(ky_idx)] = H_hf_k[i_n(idx1[1]), i_s(idx1[2]), i_K(idx1[3]), i_l(idx1[4]),
-                                                                          i_n'(idx2[1]), i_s'(idx2[2]), i_K'(idx2[3]), i_l'(idx2[4])]
+                            Δ_total[i_n(idx1[1]), i_s(idx1[2]), i_K(idx1[3]), i_l(idx1[4]),
+                                    i_n'(idx2[1]), i_s'(idx2[2]), i_K'(idx2[3]), i_l'(idx2[4]),
+                                    ikx(kx_idx), iky(ky_idx)] = Δ_new[orb1, orb2]
                         end
+
+                        # Clean up
+                        H_hf_slice = nothing
+                        H_hf_mat = nothing
+                        F = nothing
+                        U = nothing
+                        Δ_new = nothing
+                        GC.gc()
                     end
 
                     # Diagonalize at each k-point and update density matrix
@@ -271,6 +286,14 @@ function run_hartree_fock_tensor(filename::String, initial_density_matrices::Vec
                                     i_n'(idx2[1]), i_s'(idx2[2]), i_K'(idx2[3]), i_l'(idx2[4]),
                                     ikx(kx_idx), iky(ky_idx)] = Δ_new[orb1, orb2]
                         end
+
+                        # Clean up intermediate tensors for this k-point
+                        H_hf_slice = nothing
+                        H_hf_mat = nothing
+                        F = nothing
+                        U = nothing
+                        Δ_new = nothing
+                        GC.gc()
                     end
 
                     # Compute total energy
@@ -285,78 +308,131 @@ function run_hartree_fock_tensor(filename::String, initial_density_matrices::Vec
                         Δ_mat = matrix(Δ_slice, orbital_indices..., orbital_indices'...)
 
                         total_energy += real(tr(Δ_mat * (H_hf_mat + H0_mat)/2))
+
+                        # Clean up intermediate tensors for this k-point
+                        H0_slice = nothing
+                        H_hf_slice = nothing
+                        Δ_slice = nothing
+                        H0_mat = nothing
+                        H_hf_mat = nothing
+                        Δ_mat = nothing
+                        GC.gc()
                     end
                     total_energy /= n_kpoints
 
                     println("Energy: $total_energy")
 
+                    # Calculate error for DIIS
+                    error = Δ_total - Δ_old
+
+                    # Store in DIIS history
+                    push!(diis_error_history, error)
+                    push!(diis_delta_history, Δ_old)
+
+                    # Limit the history size
+                    if length(diis_error_history) > max_diis_history
+                        popfirst!(diis_error_history)
+                        popfirst!(diis_delta_history)
+                    end
+
+                    # Apply DIIS if we have enough history
+                    if length(diis_error_history) >= 2
+                        Δ_total = diis_extrapolate(diis_error_history, diis_delta_history)
+                        println("Applied DIIS extrapolation")
+                    end
+
                     # Check convergence
                     if abs(total_energy - energy_prev) < tol
                         println("Converged after $iter iterations")
-                        break
-                    end
-                    energy_prev = total_energy
-                end
 
-                # Compute order parameters for this initial density matrix
-                # We need to evaluate order parameters at each k-point and then average
-                order_params_sum = Dict(
-                    "FM_Sx" => 0.0im, "FM_Sy" => 0.0im, "FM_Sz" => 0.0im,
-                    "AFM_Sx" => 0.0im, "AFM_Sy" => 0.0im, "AFM_Sz" => 0.0im,
-                    "VFM_Tx" => 0.0im, "VFM_Ty" => 0.0im, "VFM_Tz" => 0.0im,
-                    "VAFM_Tx" => 0.0im, "VAFM_Ty" => 0.0im, "VAFM_Tz" => 0.0im,
-                    "Sublattice_Pol" => 0.0im
-                    )
+                        # Print order parameters for this converged state
+                        println("Order parameters for converged state '$name':")
 
-                for kx_idx in 1:N_kx, ky_idx in 1:N_ky
-                    Δ_slice = Δ_total * setelt(ikx(kx_idx)) * setelt(iky(ky_idx))
-                    Δ_mat = matrix(Δ_slice, orbital_indices..., orbital_indices'...)
+                            # Compute order parameters by averaging over k-points
+                            order_params_sum = Dict(
+                                "FM_Sx" => 0.0im, "FM_Sy" => 0.0im, "FM_Sz" => 0.0im,
+                                "AFM_Sx" => 0.0im, "AFM_Sy" => 0.0im, "AFM_Sz" => 0.0im,
+                                "VFM_Tx" => 0.0im, "VFM_Ty" => 0.0im, "VFM_Tz" => 0.0im,
+                                "VAFM_Tx" => 0.0im, "VAFM_Ty" => 0.0im, "VAFM_Tz" => 0.0im,
+                                "Sublattice_Pol" => 0.0im
+                                )
 
-                    # Compute order parameters for this k-point
-                    k_order_params = compute_order_parameters(Δ_mat, levels, p)
+                            for kx_idx in 1:N_kx, ky_idx in 1:N_ky
+                                Δ_slice = Δ_total * setelt(ikx(kx_idx)) * setelt(iky(ky_idx))
+                                Δ_mat = matrix(Δ_slice, orbital_indices..., orbital_indices'...)
 
-                    # Add to sum
-                    for key in keys(order_params_sum)
-                        order_params_sum[key] += k_order_params[key]
-                    end
-                end
+                                # Compute order parameters for this k-point
+                                k_order_params = compute_order_parameters(Δ_mat, levels, p)
 
-                # Average over k-points
-                order_params = Dict(key => value / n_kpoints for (key, value) in order_params_sum)
+                                # Add to sum
+                                for key in keys(order_params_sum)
+                                    order_params_sum[key] += k_order_params[key]
+                                end
 
-                    # Store results
-                    results[name] = (total_energy, Δ_total, order_params)
-                end
+                                # Clean up intermediate tensors for this k-point
+                                Δ_slice = nothing
+                                Δ_mat = nothing
+                                k_order_params = nothing
+                                GC.gc()
+                            end
 
-                # Find the result with the lowest energy
-                min_energy = Inf
-                min_name = ""
-                min_Δ = nothing
-                min_order_params = nothing
+                            # Average over k-points
+                            order_params = Dict(key => value / n_kpoints for (key, value) in order_params_sum)
 
-                for (name, (energy, Δ, order_params)) in results
-                    println("Result for $name: Energy = $energy")
-                        if energy < min_energy
-                            min_energy = energy
-                            min_name = name
-                            min_Δ = Δ
-                            min_order_params = order_params
+                                for (key, value) in order_params
+                                    println("  $key: $value")
+                                end
+
+                                # Store results and clean up
+                                results[name] = (total_energy, Δ_total, order_params)
+
+                                # Clean up intermediate tensors for this HF run
+                                H_hf_total = nothing
+                                GC.gc()
+
+                                break
+                            end
+                            energy_prev = total_energy
+
+                            # Clean up intermediate tensors for this iteration
+                            H_hf_total = nothing
+                            GC.gc()
                         end
                     end
 
-                    println("\nLowest energy result from $min_name: Energy = $min_energy")
-                    println("Order parameters:")
-                    for (key, value) in min_order_params
-                        println("  $key: $value")
+                    # Find the result with the lowest energy
+                    min_energy = Inf
+                    min_name = ""
+                    min_Δ = nothing
+                    min_order_params = nothing
+
+                    for (name, (energy, Δ, order_params)) in results
+                        println("Result for $name: Energy = $energy")
+                            if energy < min_energy
+                                min_energy = energy
+                                min_name = name
+                                min_Δ = Δ
+                                min_order_params = order_params
+                            end
+                        end
+
+                        println("\nLOWEST ENERGY RESULT")
+                        println("====================")
+                        println("Initial state: $min_name")
+                        println("Energy: $min_energy")
+                        println("\nOrder parameters:")
+                        for (key, value) in min_order_params
+                            println("  $key: $value")
+                        end
+                        println("====================")
+
+                        # Save only the lowest energy result
+                        @save filename min_Δ min_energy min_order_params orbital_indices momentum_indices k_grid_vals_x k_grid_vals_y
+
+                        println("Calculation complete. Lowest energy result saved to $filename")
+
+                        return min_Δ, min_energy, min_order_params
                     end
-
-                    # Save only the lowest energy result
-                    @save filename min_Δ min_energy min_order_params orbital_indices momentum_indices k_grid_vals_x k_grid_vals_y
-
-                    println("Calculation complete. Lowest energy result saved to $filename")
-
-                    return min_Δ, min_energy, min_order_params
-                end
 
                 # Helper function to compute order parameters for a single k-point
                 function compute_order_parameters(Δ::AbstractMatrix, levels::Int, p::Int)

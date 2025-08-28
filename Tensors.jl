@@ -730,7 +730,7 @@ return Phase_X
         end
 
 
-        function build_noninteracting_hamiltonian_tensor(levels, p, q, L, orbital_indices, momentum_indices, k_grid_vals_x, k_grid_vals_y)
+        function build_noninteracting_hamiltonian_tensor(harmonics,levels, p, q, L, orbital_indices, momentum_indices, k_grid_vals_x, k_grid_vals_y)
             i_n, i_s, i_K, i_l = orbital_indices
             ikx, iky = momentum_indices
 
@@ -740,7 +740,7 @@ return Phase_X
                 kx_val = k_grid_vals_x[kx_idx]
                 ky_val = k_grid_vals_y[ky_idx]
 
-                H0_k = Hamiltonian(kx_val, ky_val, levels, [1.0], 0.0, p, q, L, [0,0,0], [0,0,0], 0.0)
+                H0_k = Hamiltonian(kx_val, ky_val, levels, harmonics, 0.0, p, q, L, [0,0,0], [0,0,0], 0.0)
                 H0_mat = Matrix(H0_k)
 
                 # Set the values for this k-point

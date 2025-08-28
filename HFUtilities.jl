@@ -174,6 +174,231 @@ function compute_and_print_order_parameters(Δ::AbstractMatrix, levels::Int, p::
     println("-------------------------------------\n")
 end
 
+# DIIS implementation for Hartree-Fock convergence acceleration
+function diis_extrapolate(error_history::Vector{ITensor}, delta_history::Vector{ITensor})
+    n = length(error_history)
+
+    # Build the B matrix
+    B = zeros(n+1, n+1)
+    for i in 1:n
+        for j in 1:i
+            # Compute the inner product between error vectors
+            B[i,j] = real(scalar(dag(error_history[i]) * error_history[j]))
+            B[j,i] = B[i,j]  # Symmetric
+        end
+        B[i, n+1] = -1
+        B[n+1, i] = -1
+    end
+    B[n+1, n+1] = 0
+
+    # Build the right-hand side vector
+    b = zeros(n+1)
+    b[n+1] = -1
+
+    # Solve the linear system
+    c = B \ b
+
+    # Extrapolate the new density matrix
+    Δ_new = zero(delta_history[1])
+    for i in 1:n
+        Δ_new += c[i] * delta_history[i]
+    end
+
+    return Δ_new
+end
+
+function build_zeeman_density_matrix(levels, harmonics, p, q, L, nF, orbital_indices, momentum_indices, k_grid_vals_x, k_grid_vals_y, sz_value)
+    i_n, i_s, i_K, i_l = orbital_indices
+    ikx, iky = momentum_indices
+    N_kx, N_ky = length(k_grid_vals_x), length(k_grid_vals_y)
+
+    Δ = ITensor(orbital_indices'..., orbital_indices..., ikx, iky)
+
+    # Set Zeeman parameters
+    zeeman_vector = [0.0, 0.0, sz_value]  # Sz term only
+    valley_zeeman_vector = [0.0, 0.0, 0.0]
+    m = 0.0
+
+    for kx_idx in 1:N_kx, ky_idx in 1:N_ky
+        kx_val = k_grid_vals_x[kx_idx]
+        ky_val = k_grid_vals_y[ky_idx]
+
+        # Build Hamiltonian with Zeeman term
+        H_zeeman = Hamiltonian(kx_val, ky_val, levels, harmonics, 0.0, p, q, L, zeeman_vector, valley_zeeman_vector, m)
+        H_mat = Matrix(H_zeeman)
+
+        # Diagonalize and create density matrix
+        F = eigen(Hermitian(H_mat))
+        U = F.vectors
+        Δ_mat = U[:, 1:nF] * U[:, 1:nF]'
+
+        # Store in ITensor
+        for orb1 in 1:size(H_mat, 1), orb2 in 1:size(H_mat, 1)
+            # Convert flat indices to quantum numbers
+            valley1, l1, spin1, n1, S1 = decompose_index_valleyful(orb1, p, levels)
+            valley2, l2, spin2, n2, S2 = decompose_index_valleyful(orb2, p, levels)
+
+            # Map to ITensor indices
+            Δ[i_n(n1+1), i_s(spin1 == 1 ? 1 : 2), i_K(valley1+1), i_l(l1),
+              i_n'(n2+1), i_s'(spin2 == 1 ? 1 : 2), i_K'(valley2+1), i_l'(l2),
+              ikx(kx_idx), iky(ky_idx)] = Δ_mat[orb1, orb2]
+        end
+    end
+
+    return Δ
+end
+
+function build_valley_zeeman_density_matrix(levels, harmonics, p, q, L, nF, orbital_indices, momentum_indices, k_grid_vals_x, k_grid_vals_y, tz_value)
+    i_n, i_s, i_K, i_l = orbital_indices
+    ikx, iky = momentum_indices
+    N_kx, N_ky = length(k_grid_vals_x), length(k_grid_vals_y)
+
+    Δ = ITensor(orbital_indices'..., orbital_indices..., ikx, iky)
+
+    # Set valley Zeeman parameters
+    zeeman_vector = [0.0, 0.0, 0.0]
+    valley_zeeman_vector = [0.0, 0.0, tz_value]  # Valley Sz term only
+    m = 0.0
+
+    for kx_idx in 1:N_kx, ky_idx in 1:N_ky
+        kx_val = k_grid_vals_x[kx_idx]
+        ky_val = k_grid_vals_y[ky_idx]
+
+        # Build Hamiltonian with valley Zeeman term
+        H_valley_zeeman = Hamiltonian(kx_val, ky_val, levels, harmonics, 0.0, p, q, L, zeeman_vector, valley_zeeman_vector, m)
+        H_mat = Matrix(H_valley_zeeman)
+
+        # Diagonalize and create density matrix
+        F = eigen(Hermitian(H_mat))
+        U = F.vectors
+        Δ_mat = U[:, 1:nF] * U[:, 1:nF]'
+
+        # Store in ITensor
+        for orb1 in 1:size(H_mat, 1), orb2 in 1:size(H_mat, 1)
+            # Convert flat indices to quantum numbers
+            valley1, l1, spin1, n1, S1 = decompose_index_valleyful(orb1, p, levels)
+            valley2, l2, spin2, n2, S2 = decompose_index_valleyful(orb2, p, levels)
+
+            # Map to ITensor indices
+            Δ[i_n(n1+1), i_s(spin1 == 1 ? 1 : 2), i_K(valley1+1), i_l(l1),
+              i_n'(n2+1), i_s'(spin2 == 1 ? 1 : 2), i_K'(valley2+1), i_l'(l2),
+              ikx(kx_idx), iky(ky_idx)] = Δ_mat[orb1, orb2]
+        end
+    end
+
+    return Δ
+end
+
+function build_mass_term_density_matrix(levels, harmonics, p, q, L, nF, orbital_indices, momentum_indices, k_grid_vals_x, k_grid_vals_y, mass_value)
+    i_n, i_s, i_K, i_l = orbital_indices
+    ikx, iky = momentum_indices
+    N_kx, N_ny = length(k_grid_vals_x), length(k_grid_vals_y)
+
+    Δ = ITensor(orbital_indices'..., orbital_indices..., ikx, iky)
+
+    # Set mass term parameters
+    zeeman_vector = [0.0, 0.0, 0.0]
+    valley_zeeman_vector = [0.0, 0.0, 0.0]
+    m = mass_value  # Mass term
+
+    for kx_idx in 1:N_kx, ky_idx in 1:N_ky
+        kx_val = k_grid_vals_x[kx_idx]
+        ky_val = k_grid_vals_y[ky_idx]
+
+        # Build Hamiltonian with mass term
+        H_mass = Hamiltonian(kx_val, ky_val, levels, harmonics, 0.0, p, q, L, zeeman_vector, valley_zeeman_vector, m)
+        H_mat = Matrix(H_mass)
+
+        # Diagonalize and create density matrix
+        F = eigen(Hermitian(H_mat))
+        U = F.vectors
+        Δ_mat = U[:, 1:nF] * U[:, 1:nF]'
+
+        # Store in ITensor
+        for orb1 in 1:size(H_mat, 1), orb2 in 1:size(H_mat, 1)
+            # Convert flat indices to quantum numbers
+            valley1, l1, spin1, n1, S1 = decompose_index_valleyful(orb1, p, levels)
+            valley2, l2, spin2, n2, S2 = decompose_index_valleyful(orb2, p, levels)
+
+            # Map to ITensor indices
+            Δ[i_n(n1+1), i_s(spin1 == 1 ? 1 : 2), i_K(valley1+1), i_l(l1),
+              i_n'(n2+1), i_s'(spin2 == 1 ? 1 : 2), i_K'(valley2+1), i_l'(l2),
+              ikx(kx_idx), iky(ky_idx)] = Δ_mat[orb1, orb2]
+        end
+    end
+
+    return Δ
+end
+
+# Helper function to build random density matrix
+function build_random_density_matrix(levels, p, nF, orbital_indices, momentum_indices, k_grid_vals_x, k_grid_vals_y; seed=nothing)
+    i_n, i_s, i_K, i_l = orbital_indices
+    ikx, iky = momentum_indices
+    N_kx, N_ky = length(k_grid_vals_x), length(k_grid_vals_y)
+
+    Δ = ITensor(orbital_indices'..., orbital_indices..., ikx, iky)
+
+    # The total dimension of the orbital space at one k-point
+    N_orb = dim(i_n) * dim(i_s) * dim(i_K) * dim(i_l)
+
+    for kx_idx in 1:N_kx, ky_idx in 1:N_ky
+        # Generate a random density matrix for this k-point
+        Δ_mat = random_hermitian_density_matrix(N_orb, nF; seed=seed)
+
+        # Store in ITensor
+        for orb1 in 1:N_orb, orb2 in 1:N_orb
+            # Convert flat indices to multi-indices
+            idx1 = ind2sub((dim(i_n), dim(i_s), dim(i_K), dim(i_l)), orb1)
+            idx2 = ind2sub((dim(i_n), dim(i_s), dim(i_K), dim(i_l)), orb2)
+
+            Δ[i_n(idx1[1]), i_s(idx1[2]), i_K(idx1[3]), i_l(idx1[4]),
+              i_n'(idx2[1]), i_s'(idx2[2]), i_K'(idx2[3]), i_l'(idx2[4]),
+              ikx(kx_idx), iky(ky_idx)] = Δ_mat[orb1, orb2]
+        end
+    end
+
+    return Δ
+end
+
+# Helper function to build non-interacting density matrix
+function build_noninteracting_density_matrix(levels, harmonics, p, q, L, nF, orbital_indices, momentum_indices, k_grid_vals_x, k_grid_vals_y)
+    # Build non-interacting Hamiltonian and diagonalize at each k-point
+    i_n, i_s, i_K, i_l = orbital_indices
+    ikx, iky = momentum_indices
+    N_kx, N_ky = length(k_grid_vals_x), length(k_grid_vals_y)
+
+    Δ = ITensor(orbital_indices'..., orbital_indices..., ikx, iky)
+
+    for kx_idx in 1:N_kx, ky_idx in 1:N_ky
+        kx_val = k_grid_vals_x[kx_idx]
+        ky_val = k_grid_vals_y[ky_idx]
+
+        # Build non-interacting Hamiltonian
+        H0 = Hamiltonian(kx_val, ky_val, levels, harmonics, 0.0, p, q, L, [0,0,0], [0,0,0], 0.0)
+        H_mat = Matrix(H0)
+
+        # Diagonalize and create density matrix
+        F = eigen(Hermitian(H_mat))
+        U = F.vectors
+        Δ_mat = U[:, 1:nF] * U[:, 1:nF]'
+
+        # Store in ITensor
+        for orb1 in 1:size(H_mat, 1), orb2 in 1:size(H_mat, 1)
+            # Convert flat indices to quantum numbers
+            valley1, l1, spin1, n1, S1 = decompose_index_valleyful(orb1, p, levels)
+            valley2, l2, spin2, n2, S2 = decompose_index_valleyful(orb2, p, levels)
+
+            # Map to ITensor indices
+            Δ[i_n(n1+1), i_s(spin1 == 1 ? 1 : 2), i_K(valley1+1), i_l(l1),
+              i_n'(n2+1), i_s'(spin2 == 1 ? 1 : 2), i_K'(valley2+1), i_l'(l2),
+              ikx(kx_idx), iky(ky_idx)] = Δ_mat[orb1, orb2]
+        end
+    end
+
+    return Δ
+end
+
+
 
 
 

@@ -454,7 +454,7 @@ eigs = zeros(Float64, N)
 eigs[1:nF] .= 1.0
 
 # Randomly shuffle the eigenvalues
-shuffle!(eigs)
+#shuffle!(eigs)
 
 # Construct the density matrix
 Δ = U * Diagonal(eigs) * U'
