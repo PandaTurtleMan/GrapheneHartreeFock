@@ -16,41 +16,41 @@ function extractFilledOrbitals(nF,Δ)
     return filledOrbitals
 end
 
-    function DIISErrorCoeffs(errorvecs, maxErrors=8)
-        m = min(length(errorvecs), maxErrors)
-        # DIIS requires at least two error vectors to be meaningful.
-        m < 2 && return Float64[]
+function DIISErrorCoeffs(errorvecs, maxErrors=8)
+    m = min(length(errorvecs), maxErrors)
+    # DIIS requires at least two error vectors to be meaningful.
+    m < 2 && return Float64[]
 
-        # Take the last m error vectors from the history.
-        evecs = errorvecs[end-m+1:end]
+    # Take the last m error vectors from the history.
+    evecs = errorvecs[end-m+1:end]
 
-        # Build the (m+1)x(m+1) DIIS matrix.
-        B = zeros(m + 1, m + 1)
-        for i in 1:m
-            for j in i:m # Only compute upper triangle, since B is symmetric
-                dot_product = real(tr(evecs[i]' * evecs[j]))
-                B[i, j] = dot_product
-                B[j, i] = dot_product
-            end
+    # Build the (m+1)x(m+1) DIIS matrix.
+    B = zeros(m + 1, m + 1)
+    for i in 1:m
+        for j in i:m # Only compute upper triangle, since B is symmetric
+            dot_product = real(tr(evecs[i]' * evecs[j]))
+            B[i, j] = dot_product
+            B[j, i] = dot_product
         end
-
-        # Add constraints for the Lagrange multiplier.
-        B[1:m, m + 1] .= 1.0
-        B[m + 1, 1:m] .= 1.0
-        # B[m+1, m+1] is already 0.0
-
-        # Define the right-hand side of the equation B*c = b
-        b = zeros(m + 1)
-        b[m + 1] = 1.0
-
-        # --- FIXES ---
-        # 1. Solve B*c = b using the pseudoinverse for numerical stability.
-        # 2. This replaces the incorrect "c = B / b'"
-        c = pinv(B) * b
-
-        # Return the first m coefficients, excluding the Lagrange multiplier.
-        return c[1:m]
     end
+
+    # Add constraints for the Lagrange multiplier.
+    B[1:m, m + 1] .= 1.0
+    B[m + 1, 1:m] .= 1.0
+    # B[m+1, m+1] is already 0.0
+
+    # Define the right-hand side of the equation B*c = b
+    b = zeros(m + 1)
+    b[m + 1] = 1.0
+
+    # --- FIXES ---
+    # 1. Solve B*c = b using the pseudoinverse for numerical stability.
+    # 2. This replaces the incorrect "c = B / b'"
+    c = pinv(B) * b
+
+    # Return the first m coefficients, excluding the Lagrange multiplier.
+    return c[1:m]
+end
 
 function extrapolateFockMatrixWithDIIS(errorCoeffs, previousDensityMatrices, nF)
     result = zero(first(previousDensityMatrices))
@@ -292,7 +292,7 @@ end
 function build_mass_term_density_matrix(levels, harmonics, p, q, L, nF, orbital_indices, momentum_indices, k_grid_vals_x, k_grid_vals_y, mass_value)
     i_n, i_s, i_K, i_l = orbital_indices
     ikx, iky = momentum_indices
-    N_kx, N_ny = length(k_grid_vals_x), length(k_grid_vals_y)
+    N_kx, N_ky = length(k_grid_vals_x), length(k_grid_vals_y)
 
     Δ = ITensor(orbital_indices'..., orbital_indices..., ikx, iky)
 

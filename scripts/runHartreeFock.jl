@@ -1,10 +1,10 @@
-using LinearAlgebra, SpecialFunctions,ProgressMeter
-include("Utilities.jl")
-include("matrixElements.jl")
-include("LandauLevels.jl")
-include("solveNonInteractingProblem.jl")
-include("hartreeFock.jl")
-include("HFUtilities.jl")
+using LinearAlgebra, SpecialFunctions, ProgressMeter, JLD2
+include("../src/Utilities.jl")
+include("../src/matrixElements.jl")
+include("../src/LandauLevels.jl")
+include("../src/solveNonInteractingProblem.jl")
+include("../src/hartreeFock.jl")
+include("../src/HFUtilities.jl")
 
 function run_hartree_fock_with_multiple_initial_states()
     # System parameters (example values - adjust as needed)

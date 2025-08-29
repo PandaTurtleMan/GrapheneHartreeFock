@@ -9,7 +9,7 @@ function landauLevelWaveFunction(n, k_y, position, B, L)
     # Fix undefined variables and add Hermite-Gaussian function
     return exp(im * k_y * y) / (sqrt(L * l_B)) *
         exp(-(x - k_y * l_B^2)/l_B / 2) *
-            hermite_poly(n, (x - k_y * l_B^2)/l_B)
+        hermite_poly(n, (x - k_y * l_B^2)/l_B)
 end
 
 function realSpaceWaveFunction(n, S, l, p, q, momentum, position, L)

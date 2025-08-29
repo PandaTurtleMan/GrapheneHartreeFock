@@ -1,0 +1,1 @@
+To install the necessary dependencies, first run `activate .` in this folder to activate a new Julia environment. This will install the correct versions of all of the packages as according to `project.toml`. 

@@ -1,8 +1,8 @@
-include("Utilities.jl")
-include("matrixElements.jl")
-include("LandauLevels.jl")
-include("solveNonInteractingProblem.jl")
-include("hartreeFock.jl")
+include("../src/Utilities.jl")
+include("../src/matrixElements.jl")
+include("../src/LandauLevels.jl")
+include("../src/solveNonInteractingProblem.jl")
+include("../src/hartreeFock.jl")
 
 function main()
     # Physical parameters
@@ -19,10 +19,9 @@ function main()
     harmonics = [
         (0.03, (1, 0)),   # First equivalence class
         (0.0, (1, 1))    # Second equivalence class
-        ]
+    ]
 
-    plotBandEnergies(k_x, k_y, levels, harmonics, phi, L, m,
-                     zeemanVector, valleyZeemanVector)
+    plotBandEnergies(k_x, k_y, levels, harmonics, phi, L, m, zeemanVector, valleyZeemanVector)
 end
 
 main()
