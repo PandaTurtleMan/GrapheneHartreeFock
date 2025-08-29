@@ -6,6 +6,7 @@ using FFTW
 using PyPlot
 using ProgressMeter
 using Hungarian
+using Random
 
 function safe_div(num::Real, den::Real; ϵ::Real=1e-12)
     abs(den) < ϵ ? num/ϵ : num/den

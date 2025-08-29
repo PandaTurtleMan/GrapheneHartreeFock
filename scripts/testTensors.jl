@@ -101,9 +101,26 @@ function run_verification_test()
                                         orbital_indices, momentum_indices, q_grid, G_vectors, Q_val,
                                         q_indices, G_indices)
     println("Building Exchange Term (Naive)...")
-    H_exchange_naive = naiveExchangeTerm(Δ, V_full, S_core_full, S_neg_q_core_full, Phase_X_full,
-                                            orbital_indices, momentum_indices, q_grid, G_vectors, Q_val,
-                                            q_indices, G_indices, L, l_B, p_supercell, q_supercell, Ky)
+    exchangeParams = ExchangeTermParams(
+        Δ=Δ,
+        V_full=V_full,
+        S_core_full=S_core_full,
+        S_neg_q_core_full=S_neg_q_core_full,
+        Phase_X_full=Phase_D_full,
+        orbital_indices=orbital_indices,
+        momentum_indices=momentum_indices,
+        q_grid=q_grid,
+        G_vectors=G_vectors,
+        Q_val=Q_val,
+        q_indices=q_indices,
+        G_indices=G_indices,
+        L=L,
+        l_B=l_B,
+        p_supercell=p_supercell,
+        q_supercell=q_supercell,
+        Ky=Ky
+    )
+    H_exchange_naive = naiveExchangeTerm(exchangeParams)
 
     println("\n--- Comparing Results ---")
     # Convert tensor network results to arrays

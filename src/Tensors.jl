@@ -2,6 +2,7 @@ using ITensors
 using LinearAlgebra
 using ProgressMeter
 using Random
+using Parameters
 
 
 ITensors.disable_warn_order()
@@ -61,39 +62,39 @@ The indices are (n1_out, λ1_out, n2_in, λ2_in, qx, qy, Gx, Gy).
 function precomputeFormFactorTensorCore(indices, q_indices, G_indices, q_grid, G_vectors, L, l_B)
     i_n = indices
     iqx, iqy = q_indices'
-        iGx, iGy = G_indices'
-            S_core = ITensor(i_n, i_n'', iqx,iqy,iGx,iGy)
+    iGx, iGy = G_indices'
+    S_core = ITensor(i_n, i_n'', iqx,iqy,iGx,iGy)
 
 
-        qx_vals, qy_vals = q_grid
-        Gx_vals, Gy_vals = G_vectors
-        K = 2 * π / L
+    qx_vals, qy_vals = q_grid
+    Gx_vals, Gy_vals = G_vectors
+    K = 2 * π / L
 
-        @showprogress "Pre-computing Form Factor Core S(n,λ,q,G)..." for qx_idx in 1:dim(iqx), qy_idx in 1:dim(iqy), Gx_idx in 1:dim(iGx), Gy_idx in 1:dim(iGy)
-            q = [qx_vals[qx_idx], qy_vals[qy_idx]]
-            G = [Gx_vals[Gx_idx], Gy_vals[Gy_idx]]
-            q_total = q + K * G
+    @showprogress "Pre-computing Form Factor Core S(n,λ,q,G)..." for qx_idx in 1:dim(iqx), qy_idx in 1:dim(iqy), Gx_idx in 1:dim(iGx), Gy_idx in 1:dim(iGy)
+        q = [qx_vals[qx_idx], qy_vals[qy_idx]]
+        G = [Gx_vals[Gx_idx], Gy_vals[Gy_idx]]
+        q_total = q + K * G
 
-            for n1_idx in 1:dim(i_n), n2_idx in 1:dim(i_n)
-                n1 = n1_idx - div(dim(i_n) - 1,2) -1
-                λ1 =
-                (if (n1 < 0)
-                    -1
-                else
-                    1
-                end)
-                n2 = n2_idx - div(dim(i_n) - 1,2) -1
-                λ2 =
-                (if (n2 < 0)
-                          -1
-                else
-                    1
-                end)
-                val = grapheneLandauFourierMatrixElement(q_total[1], q_total[2], n1 - 1, n2 - 1, l_B, (λ1 == 1 ? 1 : -1), (λ2 == 1 ? 1 : -1))
-                S_core[i_n(n1_idx), i_n''(n2_idx), iqx(qx_idx), iqy(qy_idx), iGx(Gx_idx), iGy(Gy_idx)] = val
-            end
+        for n1_idx in 1:dim(i_n), n2_idx in 1:dim(i_n)
+            n1 = n1_idx - div(dim(i_n) - 1,2) -1
+            λ1 =
+            (if (n1 < 0)
+                -1
+            else
+                1
+            end)
+            n2 = n2_idx - div(dim(i_n) - 1,2) -1
+            λ2 =
+            (if (n2 < 0)
+                        -1
+            else
+                1
+            end)
+            val = grapheneLandauFourierMatrixElement(q_total[1], q_total[2], n1 - 1, n2 - 1, l_B, (λ1 == 1 ? 1 : -1), (λ2 == 1 ? 1 : -1))
+            S_core[i_n(n1_idx), i_n''(n2_idx), iqx(qx_idx), iqy(qy_idx), iGx(Gx_idx), iGy(Gy_idx)] = val
         end
-        return S_core
+    end
+    return S_core
 end
 
 """
@@ -528,10 +529,30 @@ function buildExchangeTerm(
     return -1.0 * H_X
 end
 
-function naiveExchangeTerm(
+@with_kw struct ExchangeTermParams
+    Δ::ITensor
+    V_full::ITensor
+    S_core_full::ITensor
+    S_neg_q_core_full::ITensor
+    Phase_X_full::ITensor
+    orbital_indices::Tuple{Index, Index, Index, Index}
+    momentum_indices::Tuple{Index, Index}
+    q_grid::Tuple{Vector{Float64}, Vector{Float64}}
+    G_vectors::Tuple{Vector{Float64}, Vector{Float64}}
+    Q_val::Tuple{Float64, Float64}
+    q_indices::Tuple{Index, Index}
+    G_indices::Tuple{Index, Index}
+    L::Float64
+    l_B::Float64
+    p_supercell::Int64
+    q_supercell::Int64
+    Ky::Float64
+end
+function naiveExchangeTerm(params::ExchangeTermParams)
     Δ,
     V_full,
-    S_core_full,S_neg_q_core_full,
+    S_core_full,
+    S_neg_q_core_full,
     Phase_X_full,
     orbital_indices,
     momentum_indices,
@@ -544,8 +565,8 @@ function naiveExchangeTerm(
     l_B,
     p_supercell,
     q_supercell,
-    Ky
-)
+    Ky = params
+
     i_n, i_s, i_K, i_l = orbital_indices
     ikx, iky = momentum_indices
     iqx, iqy = q_indices
