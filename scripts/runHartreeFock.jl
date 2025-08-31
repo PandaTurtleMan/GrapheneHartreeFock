@@ -9,7 +9,7 @@ include("../src/HFUtilities.jl")
 function run_hartree_fock_with_multiple_initial_states()
     # System parameters (example values - adjust as needed)
     levels = 2
-    p = 3
+    p = 2
     q = 5
     L = 10.0
     nF = 4
