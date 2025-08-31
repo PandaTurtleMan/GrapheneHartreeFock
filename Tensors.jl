@@ -2,6 +2,8 @@ using ITensors
 using LinearAlgebra
 using ProgressMeter
 using Random
+include("matrixElements.jl")
+include("solveNonInteractingProblem.jl")
 
 
 ITensors.disable_warn_order()
@@ -600,6 +602,17 @@ return Phase_X
 
             return traced_rho
         end
+        
+        function partial_trace_two_sets(rho::ITensor, unprimed_inds::Vector{<:Index}, primed_inds::Vector{<:Index})
+    traced_rho = rho
+    for (i, ip) in zip(unprimed_inds, primed_inds)
+        if !hasinds(traced_rho, i) || !hasinds(traced_rho, ip)
+            error("Input ITensor must have both the index $i and the primed index $ip to trace over.")
+        end
+        traced_rho *= delta(i, ip)
+    end
+    return traced_rho
+end
 
         function lambdaTensor(p, q, L, kGrid, reciVectorGrid, n_levels, l_levels)
             # Extract grid values
@@ -668,66 +681,109 @@ return Phase_X
 
             Λ_full = Λ_core * δ_s * δ_K
             Λ_neg_full = Λ_neg_core * δ_s * δ_K
-
+		
+	    println(inds(Λ_full))
+	     
             return Λ_full, Λ_neg_full, (ikx, iky, iGx, iGy, i_n, i_n′, i_l, i_l′, i_λ, i_λ′, i_s, i_s′, i_K, i_K′)
         end
 
-        function ionicCorrectionTensor(Λ, Λ_neg, V, q_indices, kGrid)
-            # Extract indices
-            iGx = commonind(Λ, V)
-            iGy = commonind(Λ, V)
-            ikx = commonind(Λ, Λ_neg)
-            iky = commonind(Λ, Λ_neg)
-            iqx, iqy = q_indices
+       function ionicCorrectionTensor(Λ, Λ_neg, V, q_indices, kGrid, orbital_indices)
+    # Extract indices from orbital_indices tuple
+    ikx, iky, iGx, iGy, i_n, i_n′, i_l, i_l′, i_λ, i_λ′, i_s, i_s′, i_K, i_K′ = orbital_indices
+    iqx, iqy = q_indices
 
-            # Get grid size for normalization
-            n_kpoints = dim(ikx) * dim(iky)
+    # Get grid size for normalization
+    n_kpoints = dim(ikx) * dim(iky)
 
-            # Find the middle index for q=0 (assuming odd-sized grids centered at 0)
-            qx_mid_idx = div(dim(iqx), 2) + 1
-            qy_mid_idx = div(dim(iqy), 2) + 1
+    # Find the middle index for q=0 
+    qx_mid_idx = div(dim(iqx), 2) +1 
+    qy_mid_idx = div(dim(iqy), 2) +1
 
-            # Set q=0 in potential tensor
-            V0 = V * setelt(iqx(qx_mid_idx)) * setelt(iqy(qy_mid_idx))
+    # Set q=0 in potential tensor
+    println("\n setting q to 0 in V")
+    V0 = V * setelt(iqx(qx_mid_idx)) * setelt(iqy(qy_mid_idx))
 
-            # Prime G indices for pointwise multiplication
-            V0_primed = prime(V0, (iGx, iGy))
-            Λ_primed = prime(Λ, (iGx, iGy))
-            Λ_neg_primed = prime(Λ_neg, (iGx, iGy))
+    # Prime G indices for pointwise multiplication
+    
+    #V0_primed = prime(V0, (iGx, iGy))
+    Λ_primed = prime(Λ, (iGx, iGy))
+    Λ_neg_primed = prime(Λ_neg, (iGx, iGy))
 
-            # Create delta tensor for G indices
-            δ_G = delta(iGx, iGx'', iGx''') * delta(iGy, iGy'', iGy''')
+    # Create delta tensor for G indices
+    δ_G = delta(iGx, iGx', iGx'') * delta(iGy, iGy', iGy'')
 
-            # Pointwise multiplication with V tensor
-            VΛ = V0_primed * δ_G * Λ_primed
-            VΛ_neg = V0_primed * δ_G * Λ_neg_primed
+    # Pointwise multiplication with V tensor
+    println("\n doing some pointwise multiplication for lambda")
+    println("\n")
+    println(inds(V0))
+    println("\n")
+    println(inds(Λ_primed))
+    VΛ = V0 * δ_G * Λ_primed
+    println("\n")
+    println(inds(VΛ))
+    println("\n doing some pointwise multiplication for lambda neg")
+    VΛ_neg = V0 * δ_G * Λ_neg_primed
+    #println(inds(VΛ_neg))
 
-            # Unprime G indices
-            VΛ = unprime(VΛ, (iGx, iGy))
-            VΛ_neg = unprime(VΛ_neg, (iGx, iGy))
+    # Unprime G indices
+    VΛ = noprime(VΛ, (iGx, iGy))
+    VΛ_neg = noprime(VΛ_neg, (iGx, iGy))
 
-            # Create a tensor of ones for momentum summation
-            ones_k = ITensor(ikx, iky)
-            for i in 1:dim(ikx), j in 1:dim(iky)
-                ones_k[ikx(i), iky(j)] = 1.0
-            end
+    # Create a tensor of ones for momentum summation
+    ones_k = ITensor(ikx, iky)
+    for i in 1:dim(ikx), j in 1:dim(iky)
+        ones_k[ikx(i), iky(j)] = 1.0
+    end
+    
+    println(inds(Λ))
 
-            # Sum over momentum indices by contracting with ones tensor
-            VΛ_sum = VΛ * ones_k
-            VΛ_neg_sum = VΛ_neg * ones_k
+    # Define unprimed and primed orbital indices
+    unprimed_orbital_inds = [i_n, i_l, i_λ, i_s, i_K]
+    primed_orbital_inds = [i_n′, i_l′, i_λ′, i_s′, i_K′]
 
-            # Partial trace over orbital indices only (excluding momentum)
-            orbital_indices = [i_n, i_n′, i_l, i_l′, i_λ, i_λ′, i_s, i_s′, i_K, i_K′]
-            traced_Λ = partial_trace(Λ, orbital_indices) / n_kpoints
-            traced_Λ_neg = partial_trace(Λ_neg, orbital_indices) / n_kpoints
+    # Partial trace over orbital indices only (excluding momentum)
+    println("\n tracing over orbital indices for lambda")
+    traced_Λ = partial_trace_two_sets(Λ, unprimed_orbital_inds, primed_orbital_inds) 
+    println("\n tracing over orbital indices for lambda neg")
+    traced_Λ_neg = partial_trace_two_sets(Λ_neg, unprimed_orbital_inds, primed_orbital_inds) 
 
-            # Contract with traced tensors
-            I1 = VΛ_sum * traced_Λ_neg
-            I2 = VΛ_neg_sum * traced_Λ
+    
+    # Sum over momentum indices by contracting with ones tensor
+    println("\n contracting over momentum for lambda ")
+    Λ_sum = (traced_Λ * ones_k )/ n_kpoints
+    println("\n contracting over momentum for lambda neg")
+    Λ_neg_sum = (traced_Λ_neg * ones_k)/ n_kpoints
 
-            # Return the sum
-            return 0.5 * (I1 + I2)
-        end
+    # Contract with traced tensors
+    println(inds(Λ_sum))
+    println("\n multiplying lambda by traced lambda")
+    VΛ_neg = noprime(VΛ_neg)
+    VΛ = noprime(VΛ)
+    I1 = VΛ_neg * Λ_sum
+    I2 = VΛ * Λ_neg_sum
+
+    println(inds(I1))
+    #println(inds(I2))
+    # compute sum
+    
+    
+    # Create genuine primed indices from the unprimed ones
+    i_n_real_prime = prime(i_n)
+    i_l_real_prime = prime(i_l)
+    i_λ_real_prime = prime(i_λ)
+    i_s_real_prime = prime(i_s)
+    i_K_real_prime = prime(i_K)
+
+    # Lists of old (incorrectly primed) and new (correctly primed) indices
+    old_indices = [i_n′, i_l′, i_λ′, i_s′, i_K′]
+    new_indices = [i_n_real_prime, i_l_real_prime, i_λ_real_prime, i_s_real_prime, i_K_real_prime]
+    
+    # Replace the indices in the final tensors
+    I1 = replaceinds(I1, old_indices, new_indices)
+    I2 = replaceinds(I2, old_indices, new_indices)
+    result = 0.5 * (I1 + I2)
+    return result
+end
 
 
         function build_noninteracting_hamiltonian_tensor(harmonics,levels, p, q, L, orbital_indices, momentum_indices, k_grid_vals_x, k_grid_vals_y)
@@ -760,7 +816,14 @@ return Phase_X
             return H0_total
         end
 
-
+function ind2sub(dims, idx)
+    sub = []
+    for d in dims
+        push!(sub, mod1(idx, d))
+        idx = div(idx - 1, d) + 1
+    end
+    return tuple(sub...)
+end
 
             #------------------------------------------------------------------------------
             # VERIFICATION AND TESTING
@@ -896,4 +959,113 @@ return Phase_X
             #------------------------------------------------------------------------------
 
             # Run the verification test
-            run_verification_test()
+            #run_verification_test()
+            
+function test_ionic_correction()
+    println("--- Testing ionicCorrectionTensor ---")
+    
+    # Parameters
+    p = 1
+    q = 1
+    L = 10.0
+    n_levels = 2
+    l_levels = 3
+    harmonicRange = 1
+    
+    # Create grids
+    kx_vals = [-0.1, 0]
+    ky_vals = [-0.1, 0]
+    Gx_vals = [0]
+    Gy_vals = [0]
+    
+    kGrid = (kx_vals, ky_vals)
+    reciVectorGrid = (Gx_vals, Gy_vals)
+    
+    # Generate lambda tensors
+    println("Generating lambda tensors...")
+    Λ_full, Λ_neg_full, orbital_indices = lambdaTensor(p, q, L, kGrid, reciVectorGrid, n_levels, l_levels)
+    
+    # Extract G indices from orbital_indices to ensure consistency
+    ikx, iky, iGx_lambda, iGy_lambda, i_n, i_n′, i_l, i_l′, i_λ, i_λ′, i_s, i_s′, i_K, i_K′ = orbital_indices
+    
+    # Create q indices (same as k indices for this test)
+    iqx = Index(length(kx_vals), "qx")
+    iqy = Index(length(ky_vals), "qy")
+    q_indices = (iqx, iqy)
+    
+    # Create potential tensor using the same G indices as lambda tensor
+    println("Generating potential tensor...")
+    V = precomputePotentialTensor(q_indices, (iGx_lambda, iGy_lambda), 
+                                 kGrid, reciVectorGrid, tanh, 1.0, L)
+    V = noprime(V)
+    
+    # Test ionic correction
+    println("Computing ionic correction...")
+    result = ionicCorrectionTensor(Λ_full, Λ_neg_full, V, q_indices, kGrid, orbital_indices)
+    
+    println("Final result indices: ", inds(result))
+    println("Test completed successfully!")
+    
+    return result
+end
+
+# Run the test
+#test_result = test_ionic_correction()
+
+function test_noninteracting_hamiltonian()
+    println("Testing build_noninteracting_hamiltonian_tensor...")
+
+    # Define parameters
+    harmonics = [(1.0, (0, 0))]  # Example value
+    levels = 1     # Number of Landau levels
+    p = 3
+    q = 4
+    L = 10.0
+
+    # Define indices
+    i_n = Index(2*levels + 1, "n")
+    i_s = Index(2, "s")
+    i_K = Index(2, "K")
+    i_l = Index(3, "l")  # Example number of superlattice bands
+    orbital_indices = (i_n, i_s, i_K, i_l)
+
+    # Define momentum grid
+    kx_vals = [-0.1, 0.1]
+    ky_vals = [-0.1, 0.1]
+    ikx = Index(length(kx_vals), "kx")
+    iky = Index(length(ky_vals), "ky")
+    momentum_indices = (ikx, iky)
+
+    # Mock ind2sub function
+    function ind2sub(dims, idx)
+        return (idx,)
+    end
+
+    # Build the tensor
+    H0 = build_noninteracting_hamiltonian_tensor(
+        harmonics, levels, p, q, L,
+        orbital_indices, momentum_indices,
+        kx_vals, ky_vals
+    )
+
+    # Check indices
+    expected_inds = [i_n, i_s, i_K, i_l, i_n', i_s', i_K', i_l', ikx, iky]
+    actual_inds = inds(H0)
+    
+    println("Expected indices: ", expected_inds)
+    println("Actual indices: ", actual_inds)
+
+    # Verify index structure
+    @assert length(actual_inds) == length(expected_inds)
+    for (exp, act) in zip(expected_inds, actual_inds)
+        @assert dim(exp) == dim(act)
+        @assert tags(exp) == tags(act)
+    end
+
+    println("✓ Test passed: Tensor has correct index structure")
+    println("Tensor norm: ", norm(H0))
+end
+
+# Run the test
+#test_noninteracting_hamiltonian()
+

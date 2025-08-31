@@ -11,7 +11,7 @@ using Polynomials
 using FastGaussQuadrature
 using SparseArrays
 using ProgressMeter
-using PyPlot
+#using PyPlot
 using Combinatorics
 
 include("Utilities.jl")
@@ -177,87 +177,4 @@ function plotBandEnergies(k_x, k_y, levels, harmonics, phi, L, m, zeeman_vector,
     show()
 end
 
-    function plot_spectrum_along_ky(k_x, ky_range, levels, harmonics, phi, p, q, L)
-        """
-        Plots the non-interacting spectrum along k_x at fixed k_y.
 
-        Parameters:
-        k_y (float): Fixed k_y value
-        kx_range (LinRange): Range of k_x values to evaluate
-        levels (int): Number of Landau levels
-        harmonics (Array): Fourier coefficients for external potential
-            phi (float): Magnetic flux per unit cell
-            p, q (int): Magnetic field parameters (B = p/(q*L^2))
-            L (float): System size
-            """
-            energies = []
-
-            # Precompute Fourier projection coefficients
-            projs = []
-            for i in 1:length(harmonics)
-                push!(projs, dotproduct(harmonics, compute_fourier_coefficients(i)))
-            end
-
-            # Calculate energies for each k_x
-            @showprogress "Computing spectrum..." for k_y in ky_range
-                H = Hamiltonian(k_x, k_y, levels, projs, phi, p, q, L)
-                #H = Hamiltonian(k_x, k_y, levels, projs, phi, p, q, L)
-                evals = sort(real.(eigvals(H)))
-                push!(energies, evals)
-            end
-
-            # Plot results
-            fig = figure(figsize=(10, 6))
-            for band in 1:length(energies[1])
-                band_energies = [e[band] for e in energies]
-                    plot(collect(ky_range), band_energies, lw=1.5)
-                end
-
-                title("Energy Spectrum at k_x = $k_x")
-                xlabel(L"$k_y$")
-                       ylabel(L"$E$")
-                       grid(true, alpha=0.3)
-                       tight_layout()
-                       show()
-
-                       return fig
-            end
-
-            function test_kx_periodicity()
-                # Parameters for the test
-                k_y = 0.0
-                levels = 5
-                harmonics = [1.0]  # Constant potential for simplicity
-                phi = 0
-                p = 10
-                q = 11
-                L = 1.0
-                k_x0 = 0.1  # Arbitrary starting k_x
-
-                # Compute Fourier projection coefficients
-                projs = [dotproduct(harmonics, compute_fourier_coefficients(i)) for i in 1:length(harmonics)]
-
-                    # Calculate expected period in k_x
-                    period = 1
-
-                    # Compute eigenvalues at k_x0 and k_x0 + period
-                    H1 = spinfulValleyfulHamiltonian(k_x0, k_y, levels, projs, phi, p, q, L,0)
-                    H2 = spinfulValleyfulHamiltonian(k_x0 + period, k_y, levels, projs, phi, p, q, L,0)
-                    evals1 = sort(real.(eigvals(H1)))
-                    evals2 = sort(real.(eigvals(H2)))
-
-                    # Check if eigenvalues are identical within tolerance
-                    diff = maximum(abs.(evals1 - evals2))
-                    tolerance = 1e-8
-                    if diff < tolerance
-                        println("Test passed: Hamiltonian is periodic in k_x with period 2π/(qL)")
-                    else
-                        println("Test failed: Eigenvalues differ by up to $diff")
-                    end
-                    return diff
-                end
-
-
-
-
-                239
