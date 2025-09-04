@@ -11,7 +11,7 @@ using Polynomials
 using FastGaussQuadrature
 using SparseArrays
 using ProgressMeter
-#using PyPlot
+using PyPlot
 using Combinatorics
 
 include("Utilities.jl")
