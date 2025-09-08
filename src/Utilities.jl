@@ -3,7 +3,7 @@ using SpecialPolynomials
 using Polynomials
 using Combinatorics
 using FFTW
-using PyPlot
+# using PyPlot
 using ProgressMeter
 using Hungarian
 using Random

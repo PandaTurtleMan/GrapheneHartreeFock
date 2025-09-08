@@ -1,4 +1,4 @@
-using LinearAlgebra, ProgressMeter, JLD2
+using LinearAlgebra, ProgressMeter, JLD2, Parameters
 include("Utilities.jl")
 include("solveNonInteractingProblem.jl")
 include("HFUtilities.jl")
@@ -130,22 +130,40 @@ function compute_final_energy(
     return 0.5 * real(tr(Δ * (H0 + H_hf)))
 end
 
-function run_hartree_fock_tensor(
-    filename::String,
-    initial_density_matrices::Vector{Tuple{String, ITensor}},
-    levels::Int,
-    p::Int,
-    q::Int,
-    L::Float64,
-    nF::Int,
-    ε::Float64,
-    harmonicRange::Int,
-    kxRadius::Int,
-    kyRadius::Int,
-    screening_fn::Function,
-    Q_val::Tuple{Int, Int},
+@with_kw struct HartreeFockParameters
+    filename::String
+    initial_density_matrices::Vector{Tuple{String, ITensor}}
+    levels::Int
+    magnetic_field_frac::Tuple{Int, Int}
+    L::Float64
+    nF::Int
+    ε::Float64
+    harmonicRange::Int
+    kxRadius::Int
+    kyRadius::Int
+    screening_fn::Function
+    Q_val::Tuple{Int, Int}
     harmonics
+end
+function run_hartree_fock_tensor(
+    params::HartreeFockParameters
 )
+    @unpack filename,
+        initial_density_matrices,
+        levels,
+        magnetic_field_frac,
+        L,
+        nF,
+        ε,
+        harmonicRange,
+        kxRadius,
+        kyRadius,
+        screening_fn,
+        Q_val,
+        harmonics = params
+
+    magnetic_field_numerator, magnetic_field_denom = magnetic_field_frac
+
     # Grid parameters
     N_kx, N_ky = 2*kxRadius, 2*kxRadius
     N_G = 2*harmonicRange + 1
@@ -154,7 +172,7 @@ function run_hartree_fock_tensor(
     i_n = Index(2*levels+1, "n")
     i_s = Index(2, "s")
     i_K = Index(2, "K")
-    i_l = Index(p, "l")  # p supercell bands
+    i_l = Index(magnetic_field_numerator, "l")  # p supercell bands
     orbital_indices = (i_n, i_s, i_K, i_l)
 
     ikx = Index(N_kx, "kx")
@@ -171,63 +189,57 @@ function run_hartree_fock_tensor(
 
     # Create grids
     k_step_x = 2π/(L * N_kx)
-    k_step_y = 2π/(q * L * N_ky)
+    k_step_y = 2π/(magnetic_field_denom * L * N_ky)
     k_grid_vals_x = [n * k_step_x for n in -kxRadius:(kxRadius-1)]
     k_grid_vals_y = [n * k_step_y for n in -kyRadius:(kyRadius-1)]
+    # why isn't this called k_grid?
     q_grid = (k_grid_vals_x, k_grid_vals_y)
 
     g_max = harmonicRange
     G_grid_vals = range(-g_max, g_max, length=N_G)
     G_vectors = (G_grid_vals, G_grid_vals)
-    l_B = sqrt(q/p) * L
+    l_B = sqrt(magnetic_field_denom/magnetic_field_numerator) * L
+
+    tensorParams = TensorParameters(
+        q_indices=q_indices,
+        q_grid=q_grid,
+        G_indices=G_indices,
+        G_vectors=G_vectors,
+        screening_fn=screening_fn,
+        ε=ε,
+        L=L,
+        i_n=i_n,
+        l_B=l_B,
+        orbital_indices=orbital_indices,
+        momentum_indices=momentum_indices,
+        magnetic_field_numerator=magnetic_field_numerator,
+        magnetic_field_denom=magnetic_field_denom,
+        Q_val=Q_val,
+        harmonics=harmonics,
+        levels=levels
+    )
 
     # Precompute tensors (these will be kept in memory)
     println("Precomputing potential tensor...")
-    V_full = precomputePotentialTensor(q_indices, G_indices, q_grid, G_vectors, screening_fn, ε, L)
+    V_full = precomputePotentialTensor(tensorParams)
 
     println("Precomputing form factor tensors...")
-    S_core_full = precomputeFormFactorTensorCore(i_n, q_indices, G_indices, q_grid, G_vectors, L, l_B)
-    S_neg_q_core_full = precomputeFormFactorSnegQ(i_n, q_indices, G_indices, q_grid, G_vectors, L, l_B)
+    S_core_full = precomputeFormFactorTensorCore(tensorParams)
+    S_neg_q_core_full = precomputeFormFactorSnegQ(tensorParams)
 
     println("Precomputing phase tensors...")
-    Phase_D_full = precomputeDirectPhaseTensor(
-        orbital_indices,
-        momentum_indices,
-        q_indices,
-        G_indices,
-        q_grid,
-        G_vectors,
-        L,
-        l_B,
-        p,
-        q,
-        2π/L
-    )
-
-    Phase_X_full = precomputeExchangePhaseTensor(
-        orbital_indices,
-        momentum_indices,
-        q_indices,
-        Q_val,
-        G_indices,
-        q_grid,
-        G_vectors,
-        L,
-        l_B,
-        p,
-        q,
-        2π/L
-    )
+    Phase_D_full = precomputeDirectPhaseTensor(tensorParams)
+    Phase_X_full = precomputeExchangePhaseTensor(tensorParams)
 
     Shift, ikx_p, iky_p = precomputeConvolutionTensor(momentum_indices, q_indices, Q_val, kxRadius, kyRadius)
 
     # Build non-interacting Hamiltonian at all k-points using helper function
     println("Building non-interacting Hamiltonian at all k-points...")
-    H0_total = build_noninteracting_hamiltonian_tensor(harmonics,levels, p, q, L, orbital_indices, momentum_indices, k_grid_vals_x, k_grid_vals_y)
+    H0_total = build_noninteracting_hamiltonian_tensor(tensorParams)
 
     # Ionic correction
     println("Computing ionic correction...")
-    Λ_full, Λ_neg_full, λ_indices = lambdaTensor(p, q, L, q_grid, G_vectors, 2*levels+1, p)
+    Λ_full, Λ_neg_full, λ_indices = lambdaTensor(tensorParams)
     ionic_correction = ionicCorrectionTensor(Λ_full, Λ_neg_full, V_full, q_indices, q_grid)
 
     # Subtract ionic correction from H0 (fast tensor operation)
@@ -405,7 +417,7 @@ function run_hartree_fock_tensor(
                     Δ_mat = matrix(Δ_slice, orbital_indices..., orbital_indices'...)
 
                     # Compute order parameters for this k-point
-                    k_order_params = compute_order_parameters(Δ_mat, levels, p)
+                    k_order_params = compute_order_parameters(Δ_mat, levels, magnetic_field_numerator)
 
                     # Add to sum
                     for key in keys(order_params_sum)

@@ -23,10 +23,31 @@ end
 # TENSOR PRE-COMPUTATION
 #------------------------------------------------------------------------------
 
+@with_kw struct TensorParameters
+    q_indices::Tuple{Index, Index}
+    q_grid::Tuple{Array{Float64}, Array{Float64}}
+    G_indices::Tuple{Index, Index}
+    G_vectors::Tuple{Array{Float64}, Array{Float64}}
+    screening_fn::Function
+    ε::Float64
+    L::Float64
+    i_n::Index
+    l_B::Float64
+    orbital_indices::Tuple{Index, Index, Index, Index}
+    momentum_indices::Tuple{Index, Index}
+    magnetic_field_numerator::Int
+    magnetic_field_denom::Int
+    Q_val::Tuple{Int, Int}
+    harmonics
+    levels::Int
+end
+
 """
 Pre-computes the Coulomb potential tensor V(q+G).
 """
-function precomputePotentialTensor(q_indices, G_indices, q_grid, G_vectors, screening_fn, ε, L)
+function precomputePotentialTensor(params::TensorParameters)
+    @unpack q_indices, G_indices, q_grid, G_vectors, screening_fn, ε, L = params
+
     #V = ITensor(q_indices..., G_indices...)
     K = 2 * π / L
 
@@ -59,8 +80,9 @@ end
 Pre-computes the core form factor tensor S(n1,λ1; n2,λ2; q,G).
 The indices are (n1_out, λ1_out, n2_in, λ2_in, qx, qy, Gx, Gy).
 """
-function precomputeFormFactorTensorCore(indices, q_indices, G_indices, q_grid, G_vectors, L, l_B)
-    i_n = indices
+function precomputeFormFactorTensorCore(params::TensorParameters)
+    @unpack i_n, q_indices, G_indices, q_grid, G_vectors, L, l_B = params
+
     iqx, iqy = q_indices'
     iGx, iGy = G_indices'
     S_core = ITensor(i_n, i_n'', iqx,iqy,iGx,iGy)
@@ -100,8 +122,9 @@ end
 """
 Pre-computes the S(-q) form factor tensor using S(-q)_ab = (-1)^(na-nb) * S(q)_ba.
 """
-function precomputeFormFactorSnegQ(indices, q_indices, G_indices, q_grid, G_vectors, L, l_B)
-    i_n = indices
+function precomputeFormFactorSnegQ(params::TensorParameters)
+    @unpack i_n, q_indices, G_indices, q_grid, G_vectors, L, l_B = params
+
     iqx, iqy = q_indices''
         iGx, iGy = G_indices
     S_neg_q = ITensor(i_n', i_n''', iqx,iqy,iGx,iGy)
@@ -143,8 +166,19 @@ end
 """
 Pre-computes the combined phase factor for the Direct Term.
 """
-function precomputeDirectPhaseTensor(orbital_indices, momentum_indices, q_indices, G_indices,
-                                        q_grid, G_vectors, L, l_B, p_supercell, q_supercell, Ky)
+function precomputeDirectPhaseTensor(params::TensorParameters)
+    @unpack orbital_indices,
+        momentum_indices,
+        q_indices,
+        G_indices,
+        q_grid,
+        G_vectors,
+        L,
+        l_B,
+        magnetic_field_numerator,
+        magnetic_field_denom = params
+
+    Ky = 2π/L
     # Unpack indices
     i_l = orbital_indices[4]
     ikx, iky = momentum_indices
@@ -175,18 +209,18 @@ function precomputeDirectPhaseTensor(orbital_indices, momentum_indices, q_indice
         Gx, Gy = Gx_vals[Gx_idx], Gy_vals[Gy_idx]
 
         # Phase 1
-        phase1 = exp(im * (Qx + Gx*K_sys) * l_B^2 * (_ky4 - _ky3 + Ky * (l4_idx - l3_idx) / q_supercell))
+        phase1 = exp(im * (Qx + Gx*K_sys) * l_B^2 * (_ky4 - _ky3 + Ky * (l4_idx - l3_idx) / magnetic_field_denom))
 
         # Phase 2
         phase2 = 0.0 + 0.0im
-        if mod(l3_idx - l1_idx + q_supercell * Gy / Ky, p_supercell) == 0
-            phase2 = exp(im * (2π / (p_supercell * Kx)) * (_kx3 - Qx) * (l3_idx - l1_idx + q_supercell * Gy / Ky))
+        if mod(l3_idx - l1_idx + magnetic_field_denom * Gy / Ky, magnetic_field_numerator) == 0
+            phase2 = exp(im * (2π / (magnetic_field_numerator * Kx)) * (_kx3 - Qx) * (l3_idx - l1_idx + magnetic_field_denom * Gy / Ky))
         end
 
         # Phase 3
         phase3 = 0.0 + 0.0im
-        if mod(l4_idx - l2_idx - q_supercell * Gy / Ky, p_supercell) == 0
-            phase3 = exp(im * (2π / (p_supercell * Kx)) * (_kx4 + Qx) * (l4_idx - l2_idx - q_supercell * Gy / Ky))
+        if mod(l4_idx - l2_idx - magnetic_field_denom * Gy / Ky, magnetic_field_numerator) == 0
+            phase3 = exp(im * (2π / (magnetic_field_numerator * Kx)) * (_kx4 + Qx) * (l4_idx - l2_idx - magnetic_field_denom * Gy / Ky))
         end
 
         Phase_D[l1(l1_idx), l2(l2_idx), l3(l3_idx), l4(l4_idx), kx3(kx3_idx), ky3(ky3_idx), kx4(kx4_idx), ky4(ky4_idx), iqx(qx_idx), iGx(Gx_idx), iGy(Gy_idx)] = phase1 * phase2 * phase3
@@ -197,20 +231,20 @@ end
 """
 Pre-computes the combined phase factor for the Exchange Term.
 """
-function precomputeExchangePhaseTensor(
-    orbital_indices,
-    momentum_indices,
-    q_indices,
-    Q_val,
-    G_indices,
-    q_grid,
-    G_vectors,
-    L,
-    l_B,
-    p_supercell,
-    q_supercell,
-    Ky
-)
+function precomputeExchangePhaseTensor(params::TensorParameters)
+    @unpack orbital_indices,
+        momentum_indices,
+        q_indices,
+        G_indices,
+        q_grid,
+        G_vectors,
+        Q_val,
+        L,
+        l_B,
+        magnetic_field_numerator,
+        magnetic_field_denom = params
+
+    Ky = 2π/L
     # Unpack indices
     i_l = orbital_indices[4]
     ikx, iky = momentum_indices
@@ -247,18 +281,18 @@ function precomputeExchangePhaseTensor(
         _Gx_val, _Gy_val = Gx_vals[Gx_idx], Gy_vals[Gy_idx]
 
         # Phase 1
-        phase1 = exp(im * (_qx + _Gx_val*K_sys) * l_B^2 * (Qy_val - _qy + Ky * (l4_idx - l3_idx) / q_supercell))
+        phase1 = exp(im * (_qx + _Gx_val*K_sys) * l_B^2 * (Qy_val - _qy + Ky * (l4_idx - l3_idx) / magnetic_field_denom))
 
         # Phase 2
         phase2 = 0.0 + 0.0im
-        if mod(l3_idx - l1_idx + q_supercell * _Gy_val / Ky, p_supercell) == 0
-            phase2 = exp(im * (2π / (p_supercell * Kx)) * (_kx - Qx_val) * (l3_idx - l1_idx + q_supercell * _Gy_val / Ky))
+        if mod(l3_idx - l1_idx + magnetic_field_denom * _Gy_val / Ky, magnetic_field_numerator) == 0
+            phase2 = exp(im * (2π / (magnetic_field_numerator * Kx)) * (_kx - Qx_val) * (l3_idx - l1_idx + magnetic_field_denom * _Gy_val / Ky))
         end
 
         # Phase 3
         phase3 = 0.0 + 0.0im
-        if mod(l4_idx - l2_idx - q_supercell * _Gy_val / Ky, p_supercell) == 0
-            phase3 = exp(im * (2π / (p_supercell * Kx)) * (_kx + _qx) * (l4_idx - l2_idx - q_supercell * _Gy_val / Ky))
+        if mod(l4_idx - l2_idx - magnetic_field_denom * _Gy_val / Ky, magnetic_field_numerator) == 0
+            phase3 = exp(im * (2π / (magnetic_field_numerator * Kx)) * (_kx + _qx) * (l4_idx - l2_idx - magnetic_field_denom * _Gy_val / Ky))
         end
 
         # FIX: Use the correct Index objects (iGx, iGy, iqx, iqy) for indexing the tensor.
@@ -666,16 +700,19 @@ function partial_trace(rho::ITensor, inds_to_trace::Vector{<:Index})
     return traced_rho
 end
 
-function lambdaTensor(p, q, L, kGrid, reciVectorGrid, n_levels, l_levels)
+function lambdaTensor(params::TensorParameters)
+    @unpack magnetic_field_numerator, magnetic_field_denom, L, q_grid, G_vectors, G_indices, levels = params
+
+    n_levels = 2*levels + 1
+    l_levels = magnetic_field_numerator
     # Extract grid values
-    kx_vals, ky_vals = kGrid
-    Gx_vals, Gy_vals = reciVectorGrid
+    kx_vals, ky_vals = q_grid
+    Gx_vals, Gy_vals = G_vectors
+    iGx, iGy = G_indices
 
     # Create indices
     ikx = Index(length(kx_vals), "kx")
     iky = Index(length(ky_vals), "ky")
-    iGx = Index(length(Gx_vals), "Gx")
-    iGy = Index(length(Gy_vals), "Gy")
     i_n = Index(n_levels, "n")
     i_n′ = Index(n_levels, "n′")
     i_l = Index(l_levels, "l")
@@ -693,7 +730,7 @@ function lambdaTensor(p, q, L, kGrid, reciVectorGrid, n_levels, l_levels)
 
     # Precompute constants
     K = 2π / L
-    l_B = sqrt(q/p) * L
+    l_B = sqrt(magnetic_field_denom/magnetic_field_numerator) * L
 
     @showprogress "Computing lambda tensor..." for ikx_idx in 1:dim(ikx), iky_idx in 1:dim(iky),
         iGx_idx in 1:dim(iGx), iGy_idx in 1:dim(iGy),
@@ -715,9 +752,9 @@ function lambdaTensor(p, q, L, kGrid, reciVectorGrid, n_levels, l_levels)
 
         # Compute matrix elements for both G and -G
         element = fourierMatrixElement(k_x, k_y, n1, n2, l1, l2, λ1, λ2,
-                                        1, 1, 1, 1, L, p, q, G_x, G_y)
+                                        1, 1, 1, 1, L, magnetic_field_numerator, magnetic_field_denom, G_x, G_y)
         element_neg = fourierMatrixElement(k_x, k_y, n1, n2, l1, l2, λ1, λ2,
-                                            1, 1, 1, 1, L, p, q, -G_x, -G_y)
+                                            1, 1, 1, 1, L, magnetic_field_numerator, magnetic_field_denom, -G_x, -G_y)
 
         Λ_core[ikx(ikx_idx), iky(iky_idx), iGx(iGx_idx), iGy(iGy_idx),
                 i_n(i_n_idx), i_n′(i_n′_idx), i_l(i_l_idx), i_l′(i_l′_idx),
@@ -739,10 +776,8 @@ end
 
 function ionicCorrectionTensor(Λ, Λ_neg, V, q_indices, kGrid)
     # Extract indices
-    iGx = commonind(Λ, V)
-    iGy = commonind(Λ, V)
-    ikx = commonind(Λ, Λ_neg)
-    iky = commonind(Λ, Λ_neg)
+    iGx, iGy = commoninds(Λ, V)
+    ikx, iky = commoninds(Λ, Λ_neg)
     iqx, iqy = q_indices
 
     # Get grid size for normalization
@@ -755,33 +790,34 @@ function ionicCorrectionTensor(Λ, Λ_neg, V, q_indices, kGrid)
     # Set q=0 in potential tensor
     V0 = V * setelt(iqx(qx_mid_idx)) * setelt(iqy(qy_mid_idx))
 
+    println("V0:")
+    println(inds(V0))
     # Prime G indices for pointwise multiplication
     V0_primed = prime(V0, (iGx, iGy))
+    println("V0_primed:")
+    println(inds(V0_primed))
     Λ_primed = prime(Λ, (iGx, iGy))
     Λ_neg_primed = prime(Λ_neg, (iGx, iGy))
 
-    # Create delta tensor for G indices
-    δ_G = delta(iGx, iGx'', iGx''') * delta(iGy, iGy'', iGy''')
+    println("Λ_primed:")
+    println(inds(Λ_primed))
 
-    # Pointwise multiplication with V tensor
-    VΛ = V0_primed * δ_G * Λ_primed
-    VΛ_neg = V0_primed * δ_G * Λ_neg_primed
+    println("Multiplying δ tensor...")
+    VΛ = V0_primed * Λ_primed
+    VΛ_neg = V0_primed * Λ_neg_primed
 
-    # Unprime G indices
-    VΛ = unprime(VΛ, (iGx, iGy))
-    VΛ_neg = unprime(VΛ_neg, (iGx, iGy))
-
-    # Create a tensor of ones for momentum summation
-    ones_k = ITensor(ikx, iky)
-    for i in 1:dim(ikx), j in 1:dim(iky)
-        ones_k[ikx(i), iky(j)] = 1.0
-    end
+    println("VΛ:")
+    println(inds(VΛ))
 
     # Sum over momentum indices by contracting with ones tensor
-    VΛ_sum = VΛ * ones_k
-    VΛ_neg_sum = VΛ_neg * ones_k
+    VΛ_sum = sum(sum(VΛ, ikx), iky)
+    VΛ_neg_sum = sum(VΛ_neg, (ikx, iky))
+
+    println("VΛ_sum:")
+    println(inds(VΛ_sum))
 
     # Partial trace over orbital indices only (excluding momentum)
+    # TODO: this should be constructed by taking indices from the actual tensor
     orbital_indices = [i_n, i_n′, i_l, i_l′, i_λ, i_λ′, i_s, i_s′, i_K, i_K′]
     traced_Λ = partial_trace(Λ, orbital_indices) / n_kpoints
     traced_Λ_neg = partial_trace(Λ_neg, orbital_indices) / n_kpoints
@@ -795,7 +831,10 @@ function ionicCorrectionTensor(Λ, Λ_neg, V, q_indices, kGrid)
 end
 
 
-function build_noninteracting_hamiltonian_tensor(harmonics,levels, p, q, L, orbital_indices, momentum_indices, k_grid_vals_x, k_grid_vals_y)
+function build_noninteracting_hamiltonian_tensor(params::TensorParameters)
+    @unpack harmonics,levels, magnetic_field_numerator, magnetic_field_denom, L, q_grid, orbital_indices, momentum_indices = params
+    
+    k_grid_vals_x, k_grid_vals_y = q_grid
     i_n, i_s, i_K, i_l = orbital_indices
     ikx, iky = momentum_indices
 
@@ -805,7 +844,7 @@ function build_noninteracting_hamiltonian_tensor(harmonics,levels, p, q, L, orbi
         kx_val = k_grid_vals_x[kx_idx]
         ky_val = k_grid_vals_y[ky_idx]
 
-        H0_k = Hamiltonian(kx_val, ky_val, levels, harmonics, 0.0, p, q, L, [0,0,0], [0,0,0], 0.0)
+        H0_k = Hamiltonian(kx_val, ky_val, levels, harmonics, 0.0, magnetic_field_numerator, magnetic_field_denom, L, [0,0,0], [0,0,0], 0.0)
         H0_mat = Matrix(H0_k)
 
         # Set the values for this k-point

@@ -80,10 +80,22 @@ function run_hartree_fock_with_multiple_initial_states()
         println("Running Hartree-Fock for Q point $i: $Q_val")
 
         filename = "hartree_fock_result_Q$i.jld2"
-        min_Δ, min_energy, min_order_params = run_hartree_fock_tensor(
-            filename, initial_density_matrices, levels, p, q, L, nF, ε,
-            harmonicRange, kxRadius, kyRadius, screening_fn, Q_val, harmonics
-            )
+        HF_params = HartreeFockParameters(
+            filename=filename,
+            initial_density_matrices=initial_density_matrices,
+            levels=levels,
+            magnetic_field_frac=(p, q),
+            L=L,
+            nF=nF,
+            ε=ε,
+            harmonicRange=harmonicRange,
+            kxRadius=kxRadius,
+            kyRadius=kyRadius,
+            screening_fn=screening_fn,
+            Q_val=Q_val,
+            harmonics=harmonics
+        )
+        min_Δ, min_energy, min_order_params = run_hartree_fock_tensor(HF_params)
 
         push!(results, (Q_val, min_energy, min_Δ, min_order_params))
     end
